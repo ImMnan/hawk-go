@@ -24,3 +24,36 @@
                 - Then it will add these pages, old and new to existing directory structure for the other tool to use. 
             - Once this is done, it will come back to the main for loop and execute the next iteration
             - Read the cache and wait/sleep as per the sync cycle. 
+
+
+```
+sync(c)
+ │
+ ├─ guard: if sync.enabled == false → return immediately
+ │
+ ├─ calls syncTrigger(c)
+ │   └─ returns: trigger channel, stop func, err
+ │
+ └─ for triggeredAt := range trigger {
+         ← BLOCKS here until cron fires
+         → runs one sync pass over all sources
+         ← BLOCKS again for next cron tick
+    }
+```
+
+
+```
+cronSched.Start()  ← background goroutine managed by the cron library
+
+every time cron schedule fires:
+   func() {
+      select {
+        case trigger <- time.Now():   ← wake up sync()
+        default:                       ← drop tick if sync() is still busy
+      }
+   }
+
+stop() called:
+   cronSched.Stop().Done()  ← waits for in-flight cron job to finish
+   close(trigger)           ← breaks the "for range" in sync(), goroutine exits
+```
