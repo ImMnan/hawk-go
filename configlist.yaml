@@ -9,20 +9,22 @@
     sharedVolume:
       path: /opt/     
     schedule: "0 0 * * *"
-    source: 
+    sources: 
     - type: git
+      name: basic-demo
       url: "https://github.com/argoproj/argo-cd.git"
       branch: main
-      paths: ["/en/docs"]
+      dirs: ["/en/docs"]
       credentials: 
         type: secret
         name: name-secret-token  
-    database: 
-      type: mongo
-      path:  
+    databases: 
+    - type: mongo
+      name: local-mongo
+      connection:
         serviceName: mongo-svc
 	    # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
-        endpoint: 10.2.24.1:2121
+      # endpoint: 10.2.24.1:2121
         path: /hawk/doc/perfecto-doc/
       credentials:
         type: secret
