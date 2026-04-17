@@ -1,4 +1,3 @@
-  
 - name: perfecto-doc
   type: doc
   id: perfecto-doc-12451
@@ -6,42 +5,22 @@
   sync: 
     enabled: true
     mode: local-agent
-    agentType: py-quant-ai      
+    agentType: py-quant-ai 
+    sharedVolume: 
+      path: /opt/     
     schedule: "0 0 * * *"
-    source: "https://github.com/argoproj/argo-cd.git"
-    credentials: 
-      type: secret
-      name: name-secret-token  
-    save: 
-      path: /opt/
+    source: 
+      - type: git
+        url: "https://github.com/argoproj/argo-cd.git"
+        branch: main
+        paths: ["/en/docs"]
+        credentials: 
+          type: secret
+          name: name-secret-token  
     database: 
       type: mongo
       path:  
         serviceName: mongo-svc
-	# IF serviceName, endpoint is ignored, endpoint is more of an external database setup
+	    # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
         endpoint: 10.2.24.1:2121
-        prefix: /hawk/doc/perfecto-doc/
-   
-- name: blaze-doc 
-  type: doc
-  id: blazee-doc-12451
-  description: "this is a sample doc sync"
-  sync: 
-    enabled: true
-    mode: local-agent
-    agentType: py-quant-ai      
-    schedule: "0 2 * * *"
-    source: "https://github.com/argoproj/argo-cd.git"
-    credentials: 
-      type: secret
-      name: name-secret-token  
-    save: 
-      path: /opt/
-    database: 
-      type: mongo
-      path:  
-        serviceName: mongo-svc
-	# IF serviceName, endpoint is ignored, endpoint is more of an external database setup
-        endpoint: 10.2.24.1:2121
-     
-      
+        path: /hawk/doc/perfecto-doc/
