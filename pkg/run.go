@@ -2,6 +2,10 @@ package pkg
 
 import (
 	"fmt"
+	"os"
+	stdsync "sync"
+
+	"gopkg.in/yaml.v3"
 )
 
 type ConfList []Config
@@ -15,13 +19,13 @@ type Config struct {
 }
 
 type SyncConfig struct {
-	Enabled     bool
-	Mode        string
-	AgentType   string
-	Schedule    string
-	Source      string
-	Credentials credentialsConfig
-	Forward     forwardConfig
+	Enabled      bool
+	Mode         string
+	AgentType    string             `yaml:"agentType"`
+	SharedVolume sharedVolumeConfig `yaml:"sharedVolume"`
+	Schedule     string
+	Sources      []sourceConfig
+	Database     databaseConfig
 }
 
 type credentialsConfig struct {
@@ -29,8 +33,29 @@ type credentialsConfig struct {
 	Name string
 }
 
-type forwardConfig struct {
+type sharedVolumeConfig struct {
 	Path string
+}
+
+type sourceConfig struct {
+	Type        string
+	Name        string
+	URL         string `yaml:"url"`
+	Branch      string
+	Dirs        []string
+	Credentials credentialsConfig
+}
+
+type databaseConfig struct {
+	Type        string
+	Connection  databaseConnectionConfig
+	Credentials credentialsConfig
+}
+
+type databaseConnectionConfig struct {
+	ServiceName string `yaml:"serviceName"`
+	Endpoint    string
+	Path        string
 }
 
 func Run() {
@@ -48,24 +73,38 @@ func Run() {
 
 	// For loop that is going to run the main loop for config list.
 	// Iterate over conflist struct and proceed in the for loop.
+	var workers stdsync.WaitGroup
 	for _, c := range confList {
 		fmt.Printf("[DEBUG] Processing config: %s\n", c.Name)
-		// Here we would have the logic to process each config, for now we just print it.
-
-		err := sync(c)
-		if err != nil {
-			panic(err)
-
-		}
+		workers.Add(1)
+		go func(cfg Config) {
+			defer workers.Done()
+			if err := sync(cfg); err != nil {
+				fmt.Printf("sync worker for %s stopped: %v\n", cfg.Name, err)
+			}
+		}(c)
 	}
+
+	workers.Wait()
 }
 
 func init_hawk() (ConfList, error) {
 
 	// This function is main initialisation function, tieng all other sub-init functions.
+	const configPath = "/etc/hawk/configlist.yaml"
+
+	configData, err := os.ReadFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("unable to read config file %s: %w", configPath, err)
+	}
+
+	var confList ConfList
+	if err := yaml.Unmarshal(configData, &confList); err != nil {
+		return nil, fmt.Errorf("unable to parse config YAML: %w", err)
+	}
 
 	fmt.Println("Everythung work well, returning success")
 
-	return nil, nil
+	return confList, nil
 
 }
