@@ -2,11 +2,11 @@
   type: doc
   id: perfecto-doc-12451
   description: "this is a sample doc sync"
-  sync: 
+  sync:
     enabled: true
     mode: local-agent
     agentType: py-quant-ai 
-    sharedVolume: 
+    sharedVolume:
       path: /opt/     
     schedule: "0 0 * * *"
     source: 
@@ -24,3 +24,6 @@
 	    # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
         endpoint: 10.2.24.1:2121
         path: /hawk/doc/perfecto-doc/
+      credentials:
+        type: secret
+        name: name-secret-token
