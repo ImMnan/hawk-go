@@ -10,13 +10,13 @@
       path: /opt/     
     schedule: "0 0 * * *"
     source: 
-      - type: git
-        url: "https://github.com/argoproj/argo-cd.git"
-        branch: main
-        paths: ["/en/docs"]
-        credentials: 
-          type: secret
-          name: name-secret-token  
+    - type: git
+      url: "https://github.com/argoproj/argo-cd.git"
+      branch: main
+      paths: ["/en/docs"]
+      credentials: 
+        type: secret
+        name: name-secret-token  
     database: 
       type: mongo
       path:  
