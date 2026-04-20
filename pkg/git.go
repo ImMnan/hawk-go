@@ -24,8 +24,7 @@ import (
 // Compare the latest with the previous commit, last commit that was sent in the func.
 
 type gitSource struct {
-	cfg        GitCfg
-	sourceName string
+	cfg GitCfg
 }
 
 type gitFileSnapshot struct {
@@ -58,8 +57,8 @@ type gitDiffResult struct {
 	ExportedNewFiles []string `json:"exportedNewFiles,omitempty"`
 }
 
-func newGitSource(cfg GitCfg, sourceName string) Source {
-	return gitSource{cfg: cfg, sourceName: sourceName}
+func newGitSource(cfg GitCfg) Source {
+	return gitSource{cfg: cfg}
 }
 
 func (g gitSource) Validate() error {
@@ -76,11 +75,11 @@ func (g gitSource) Validate() error {
 
 func (g gitSource) Fetch() error {
 	sharedVolumePath := os.Getenv("SHARED_VOLUME_PATH")
-	_, err := gitSync(g.cfg, g.sourceName, sharedVolumePath)
+	_, err := gitSync(g.cfg, sharedVolumePath)
 	return err
 }
 
-func gitSync(source GitCfg, sourceName string, sharedVolumePath string) ([]byte, error) {
+func gitSync(source GitCfg, sharedVolumePath string) ([]byte, error) {
 
 	// use mongo libraries to get the last commit id for the name of the source, which is also source.Name
 	// for now, let;s hard code the last commit id:
@@ -93,10 +92,6 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string) ([]byte,
 
 	lastCommitData, err := gitGetLastCommit(source, lastCommitSHA)
 	if err != nil {
-		if gitDebugEnabled() {
-			fmt.Printf("[git-debug] unable to load last commit %s; using empty baseline: %v\n", lastCommitSHA, err)
-		}
-
 		latestSnapshot, decodeErr := decodeGitCommitSnapshot(latestCommitData)
 		if decodeErr != nil {
 			return nil, fmt.Errorf("failed to decode latest snapshot while building baseline: %w", decodeErr)
@@ -127,9 +122,6 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string) ([]byte,
 	}
 
 	if len(diffResult.ChangedFiles) == 0 {
-		if gitDebugEnabled() {
-			fmt.Printf("[git-debug] no changed files detected for source=%s\n", sourceName)
-		}
 		return diffData, nil
 	}
 
@@ -163,19 +155,11 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string) ([]byte,
 		return nil, fmt.Errorf("failed to marshal final diff result: %w", err)
 	}
 
-	if gitDebugEnabled() {
-		fmt.Printf("[git-debug] exported changed files source=%s oldCount=%d newCount=%d\n", sourceName, len(exportedOldFiles), len(exportedNewFiles))
-	}
-
 	return finalDiffData, nil
 
 }
 
 func gitGetLatestCommit(source GitCfg) ([]byte, error) {
-	if gitDebugEnabled() {
-		fmt.Printf("[git-debug] fetching latest commit repo=%s branch=%s\n", source.URL, source.Branch)
-	}
-
 	auth, err := resolveGitAuth(source)
 	if err != nil {
 		return nil, err
@@ -190,10 +174,6 @@ func gitGetLatestCommit(source GitCfg) ([]byte, error) {
 	})
 	if err != nil {
 		return nil, fmt.Errorf("failed to clone repo %s branch %s: %w", source.URL, source.Branch, err)
-	}
-
-	if gitDebugEnabled() {
-		fmt.Printf("[git-debug] clone succeeded repo=%s branch=%s\n", source.URL, source.Branch)
 	}
 
 	ref, err := repo.Reference(plumbing.NewBranchReferenceName(source.Branch), true)
@@ -231,10 +211,6 @@ func gitGetLatestCommit(source GitCfg) ([]byte, error) {
 		return nil, fmt.Errorf("failed to scan files for commit %s: %w", commit.Hash, err)
 	}
 
-	if gitDebugEnabled() {
-		fmt.Printf("[git-debug] commit=%s filteredFiles=%d\n", commit.Hash.String(), len(files))
-	}
-
 	sort.Slice(files, func(i, j int) bool {
 		return files[i].Path < files[j].Path
 	})
@@ -259,10 +235,6 @@ func gitGetLastCommit(source GitCfg, lastCommitId string) ([]byte, error) {
 	lastCommitID := strings.TrimSpace(lastCommitId)
 	if lastCommitID == "" {
 		return nil, fmt.Errorf("last commit id is required")
-	}
-
-	if gitDebugEnabled() {
-		fmt.Printf("[git-debug] fetching last commit repo=%s commit=%s\n", source.URL, lastCommitID)
 	}
 
 	auth, err := resolveGitAuth(source)
@@ -447,17 +419,6 @@ func resolveGitAuth(source GitCfg) (transport.AuthMethod, error) {
 	}
 
 	secretValues := loadGitSecretCredentials(source.Credentials)
-	if gitDebugEnabled() {
-		basePath := resolveSecretBasePath(source.Credentials)
-		fmt.Printf("[git-debug] secret lookup type=%s name=%s path=%s usernamePresent=%t tokenPresent=%t passwordPresent=%t\n",
-			source.Credentials.Type,
-			secretName,
-			basePath,
-			strings.TrimSpace(secretValues.Username) != "",
-			strings.TrimSpace(secretValues.Token) != "",
-			strings.TrimSpace(secretValues.Password) != "",
-		)
-	}
 
 	password := firstNonEmpty(secretValues.Token, secretValues.Password)
 	if password == "" {
@@ -729,9 +690,4 @@ func splitByMatchedDir(filePath string, dirs []string) (string, string) {
 	}
 
 	return bestMatch, relativePath
-}
-
-func gitDebugEnabled() bool {
-	v := strings.ToLower(strings.TrimSpace(os.Getenv("HAWK_DEBUG_GIT")))
-	return v == "1" || v == "true" || v == "yes"
 }

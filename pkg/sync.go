@@ -19,7 +19,7 @@ func newSource(cfg sourceConfig) (Source, error) {
 		if cfg.Git == nil {
 			return nil, fmt.Errorf("missing git config")
 		}
-		return newGitSource(*cfg.Git, cfg.Name), nil
+		return newGitSource(*cfg.Git), nil
 	case "confluence":
 		if cfg.Confluence == nil {
 			return nil, fmt.Errorf("missing confluence config")
