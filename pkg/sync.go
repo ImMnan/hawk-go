@@ -10,7 +10,7 @@ import (
 
 type Source interface {
 	Validate() error
-	Fetch(sharedVolumePath string) error
+	Fetch() error
 }
 
 func newSource(cfg sourceConfig) (Source, error) {
@@ -63,7 +63,7 @@ func sync(c Config) error {
 					return fmt.Errorf("source %s config invalid: %w", source.Name, err)
 				}
 
-				if err := handler.Fetch(syncCfg.SharedVolume.Path); err != nil {
+				if err := handler.Fetch(); err != nil {
 					return fmt.Errorf("source %s failed: %w", source.Name, err)
 				}
 			}

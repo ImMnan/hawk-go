@@ -31,7 +31,7 @@ func (c confluenceSource) Validate() error {
 	return nil
 }
 
-func (c confluenceSource) Fetch(_ string) error {
+func (c confluenceSource) Fetch() error {
 	_, err := confluenceSync(c.cfg)
 	return err
 }

@@ -74,7 +74,8 @@ func (g gitSource) Validate() error {
 	return nil
 }
 
-func (g gitSource) Fetch(sharedVolumePath string) error {
+func (g gitSource) Fetch() error {
+	sharedVolumePath := os.Getenv("SHARED_VOLUME_PATH")
 	_, err := gitSync(g.cfg, g.sourceName, sharedVolumePath)
 	return err
 }
