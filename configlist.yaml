@@ -7,25 +7,61 @@
     mode: local-agent
     agentType: py-quant-ai 
     sharedVolume:
-      path: /opt/     
-    schedule: "0 0 * * *"
+      path: $HOME/Desktop/     
+    schedule: "* * * * * "
     sources: 
     - type: git
       name: basic-demo
-      url: "https://github.com/argoproj/argo-cd.git"
-      branch: main
-      dirs: ["/en/docs"]
-      credentials: 
-        type: secret
-        name: name-secret-token  
+      git:
+        url: "https://github.com/ImMnan/doc-test.git"
+        branch: main
+        dirList: ["content/Perfecto"]
+        ignoreDirList: ["content/Perfecto/rest-api"]
+        credentials: 
+          type: secret
+          name: git-secret-token
+          path: $HOME  
     databases: 
     - type: mongo
       name: local-mongo
       connection:
         serviceName: mongo-svc
-	    # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
+        # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
       # endpoint: 10.2.24.1:2121
         path: /hawk/doc/perfecto-doc/
       credentials:
         type: secret
-        name: name-secret-token
+        name: name-secret-tokenx
+
+#- name: blazemeter-doc
+#  type: doc
+#  id: blazemeter-doc-12452
+#  description: "this is a sample doc sync"
+#  sync:
+#    enabled: true
+#    mode: local-agent
+#    agentType: py-quant-ai 
+#    sharedVolume:
+#      path: /opt/     
+#    schedule: "0 0 * * *"
+#    sources: 
+#    - type: confluence
+#      name: basic-confluence-demo
+#      confluence:
+#        url: "https://github.com/argoproj/argo-cd.git"
+#        space: "main"
+#        dirs: ["/en/docs"]
+#        credentials: 
+#          type: secret
+#          name: name-secret-token  
+#    databases: 
+#    - type: mongo
+#      name: local-mongo
+#      connection:
+#        serviceName: mongo-svc
+#        # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
+#      # endpoint: 10.2.24.1:2121
+#        path: /hawk/doc/perfecto-doc/
+#      credentials:
+#        type: secret
+#        name: name-secret-tokenx
