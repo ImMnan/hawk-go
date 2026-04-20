@@ -31,6 +31,7 @@ type SyncConfig struct {
 type credentialsConfig struct {
 	Type string
 	Name string
+	Path string `yaml:"path"`
 }
 
 type sharedVolumeConfig struct {
@@ -38,12 +39,25 @@ type sharedVolumeConfig struct {
 }
 
 type sourceConfig struct {
-	Type        string
-	Name        string
-	URL         string `yaml:"url"`
-	Branch      string
-	Dirs        []string
-	Credentials credentialsConfig
+	Type       string         `yaml:"type"`
+	Name       string         `yaml:"name"`
+	Git        *GitCfg        `yaml:"git,omitempty"`
+	Confluence *ConfluenceCfg `yaml:"confluence,omitempty"`
+}
+
+type GitCfg struct {
+	URL         string            `yaml:"url"`
+	Branch      string            `yaml:"branch"`
+	Dirs        []string          `yaml:"dirList"`
+	IgnoreDirs  []string          `yaml:"ignoreDirList"`
+	Credentials credentialsConfig `yaml:"credentials"`
+}
+
+type ConfluenceCfg struct {
+	URL         string            `yaml:"url"`
+	Space       string            `yaml:"space"`
+	Dirs        []string          `yaml:"dirs"`
+	Credentials credentialsConfig `yaml:"credentials"`
 }
 
 type databaseConfig struct {
@@ -91,8 +105,8 @@ func Run() {
 func init_hawk() (ConfList, error) {
 
 	// This function is main initialisation function, tieng all other sub-init functions.
-	const configPath = "/etc/hawk/configlist.yaml"
-
+	//	const configPath = "/etc/hawk/configlist.yaml"
+	const configPath = "/Users/mpatel/Documents/GitHub/hawk-go/configlist.yaml"
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read config file %s: %w", configPath, err)
@@ -103,7 +117,7 @@ func init_hawk() (ConfList, error) {
 		return nil, fmt.Errorf("unable to parse config YAML: %w", err)
 	}
 
-	fmt.Println("Everythung work well, returning success")
+	fmt.Println("Config loaded, returning success")
 
 	return confList, nil
 

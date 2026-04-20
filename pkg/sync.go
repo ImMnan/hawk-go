@@ -9,13 +9,22 @@ import (
 )
 
 type Source interface {
-	Fetch() error
+	Validate() error
+	Fetch(sharedVolumePath string) error
 }
 
 func newSource(cfg sourceConfig) (Source, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
 	case "git":
-		return newGitSource(cfg), nil
+		if cfg.Git == nil {
+			return nil, fmt.Errorf("missing git config")
+		}
+		return newGitSource(*cfg.Git, cfg.Name), nil
+	case "confluence":
+		if cfg.Confluence == nil {
+			return nil, fmt.Errorf("missing confluence config")
+		}
+		return newConfluenceSource(*cfg.Confluence), nil
 	default:
 		return nil, fmt.Errorf("unsupported source type: %s", cfg.Type)
 	}
@@ -50,7 +59,11 @@ func sync(c Config) error {
 					return fmt.Errorf("source %s (%s): %w", source.Name, source.Type, err)
 				}
 
-				if err := handler.Fetch(); err != nil {
+				if err := handler.Validate(); err != nil {
+					return fmt.Errorf("source %s config invalid: %w", source.Name, err)
+				}
+
+				if err := handler.Fetch(syncCfg.SharedVolume.Path); err != nil {
 					return fmt.Errorf("source %s failed: %w", source.Name, err)
 				}
 			}
@@ -74,7 +87,7 @@ func sync(c Config) error {
 		   The agent will be triggered in the kubernetes
 		   Agent reads and processes the data, returns the output
 		   the output them must be placed into the database i.e. database.type
-
+		this
 
 	*/
 
