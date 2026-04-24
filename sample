@@ -1,0 +1,22 @@
+{
+    "name": "basic-git",
+	"BaseCommit": "66684777c6fc74c8fc85c13dfa3143fb551b56e3",
+	"TargetCommit": "e9a6fc221c7f32e3d9393a34170f3fe9860038d0",
+	"ChangedFiles": [
+		"content/Perfecto/manual-testing/Inject_an_image.htm",
+		"content/Perfecto/release-notes/release-26-3.htm"
+	],
+	"DeletedFiles": [],
+	"ExportedFiles": [
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/manual-testing/New/Inject_an_image.htm",
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/manual-testing/Old/Inject_an_image.htm",
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/release-notes/New/release-26-3.htm"
+	],
+	"ExportedOldFiles": [
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/manual-testing/Old/Inject_an_image.htm"
+	],
+	"ExportedNewFiles": [
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/manual-testing/New/Inject_an_image.htm",
+		"/Users/mpatel/Desktop/basic-git/e9a6fc221c7f32e3d9393a34170f3fe9860038d0/content/Perfecto/release-notes/New/release-26-3.htm"
+	]
+}
