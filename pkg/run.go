@@ -19,13 +19,12 @@ type Config struct {
 }
 
 type SyncConfig struct {
-	Enabled      bool
-	Mode         string
-	AgentType    string             `yaml:"agentType"`
-	SharedVolume sharedVolumeConfig `yaml:"sharedVolume"`
-	Schedule     string
-	Sources      []sourceConfig
-	Database     databaseConfig
+	Enabled   bool
+	Mode      string
+	AgentType string `yaml:"agentType"`
+	Schedule  string
+	Sources   []sourceConfig
+	Database  databaseConfig
 }
 
 type credentialsConfig struct {
@@ -39,10 +38,11 @@ type sharedVolumeConfig struct {
 }
 
 type sourceConfig struct {
-	Type       string         `yaml:"type"`
-	Name       string         `yaml:"name"`
-	Git        *GitCfg        `yaml:"git,omitempty"`
-	Confluence *ConfluenceCfg `yaml:"confluence,omitempty"`
+	Type         string             `yaml:"type"`
+	Name         string             `yaml:"name"`
+	SharedVolume sharedVolumeConfig `yaml:"sharedVolume"`
+	Git          *GitCfg            `yaml:"git,omitempty"`
+	Confluence   *ConfluenceCfg     `yaml:"confluence,omitempty"`
 }
 
 type GitCfg struct {
