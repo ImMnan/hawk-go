@@ -5,13 +5,16 @@
   sync:
     enabled: true
     mode: local-agent
-    agentType: py-quant-ai 
-    sharedVolume:
-      path: $HOME/Desktop/     
+    image: py-quant-ai:latest 
+    #sharedVolume:
+    #  path: $HOME/Desktop/     
     schedule: "* * * * * "
+    template: /opt/template/git-job-template.yaml
     sources: 
     - type: git
-      name: basic-demo
+      name: basic-git
+      sharedVolume:
+        path: $HOME/Desktop/  
       git:
         url: "https://github.com/ImMnan/doc-test.git"
         branch: main
@@ -20,7 +23,7 @@
         credentials: 
           type: secret
           name: git-secret-token
-          path: $HOME  
+          path: $HOME
     databases: 
     - type: mongo
       name: local-mongo
@@ -28,11 +31,15 @@
         serviceName: mongo-svc
         # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
       # endpoint: 10.2.24.1:2121
-        path: /hawk/doc/perfecto-doc/
+      path: $HOME/Desktop/
       credentials:
         type: secret
-        name: name-secret-tokenx
-
+        name: name-secret-token
+    - type: fs
+      name: local-fs
+      path: $HOME/Documents/  
+  
+  
 #- name: blazemeter-doc
 #  type: doc
 #  id: blazemeter-doc-12452
