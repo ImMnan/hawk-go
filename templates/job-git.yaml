@@ -1,0 +1,19 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: any-dummy-job
+spec:
+  template:
+    spec:
+      containers:
+      - name: dummy-container
+        image: busybox
+        command: ["sh", "-c", "ls -l $HOME/Desktop/ && sleep 3600"]
+        volumeMounts:
+        - mountPath: "$HOME/Desktop/"
+          name: hawk-shared-volume
+    volumes:
+      - name: hawk-shared-volume
+        persistentVolumeClaim:
+          claimName: hawk-shared-pvc 
+  backoffLimit: 10
