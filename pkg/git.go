@@ -24,7 +24,9 @@ import (
 // Compare the latest with the previous commit, last commit that was sent in the func.
 
 type gitSource struct {
-	cfg GitCfg
+	cfg              GitCfg
+	sourceName       string
+	sharedVolumePath string
 }
 
 type gitFileSnapshot struct {
@@ -48,6 +50,7 @@ type gitSecretCredentials struct {
 }
 
 type gitDiffResult struct {
+	Name             string   `json:"name,omitempty"`
 	BaseCommit       string   `json:"baseCommit"`
 	TargetCommit     string   `json:"targetCommit"`
 	ChangedFiles     []string `json:"changedFiles"`
@@ -57,11 +60,19 @@ type gitDiffResult struct {
 	ExportedNewFiles []string `json:"exportedNewFiles,omitempty"`
 }
 
-func newGitSource(cfg GitCfg) Source {
-	return gitSource{cfg: cfg}
+func newGitSource(cfg GitCfg, sourceName string, sharedVolumePath string) Source {
+	return gitSource{
+		cfg:              cfg,
+		sourceName:       strings.TrimSpace(sourceName),
+		sharedVolumePath: strings.TrimSpace(sharedVolumePath),
+	}
 }
 
 func (g gitSource) Validate() error {
+	if g.sourceName == "" {
+		return fmt.Errorf("source name is required")
+	}
+
 	if strings.TrimSpace(g.cfg.URL) == "" {
 		return fmt.Errorf("git.url is required")
 	}
@@ -70,31 +81,42 @@ func (g gitSource) Validate() error {
 		return fmt.Errorf("git.branch is required")
 	}
 
+	if g.sharedVolumePath == "" {
+		return fmt.Errorf("sharedVolume.path is required for git source %s", g.sourceName)
+	}
+
 	return nil
 }
 
-func (g gitSource) Fetch() error {
-	sharedVolumePath := os.Getenv("SHARED_VOLUME_PATH")
-	_, err := gitSync(g.cfg, sharedVolumePath)
-	return err
+func (g gitSource) Fetch() (SourceResult, error) {
+	gitResult, err := gitSync(g.cfg, g.sourceName, g.sharedVolumePath)
+	if err != nil {
+		return SourceResult{Name: g.sourceName, Type: "git"}, err
+	}
+
+	return SourceResult{
+		Name:    g.sourceName,
+		Type:    "git",
+		GitDiff: &gitResult,
+	}, nil
 }
 
-func gitSync(source GitCfg, sharedVolumePath string) ([]byte, error) {
+func gitSync(source GitCfg, sourceName string, sharedVolumePath string) (gitDiffResult, error) {
 
 	// use mongo libraries to get the last commit id for the name of the source, which is also source.Name
 	// for now, let;s hard code the last commit id:
-	lastCommitSHA := "87fd6b8d0f56e5f5bad2c887585e9288f2adae93"
+	lastCommitSHA := "66684777c6fc74c8fc85c13dfa3143fb551b56e3"
 
 	latestCommitData, err := gitGetLatestCommit(source)
 	if err != nil {
-		return nil, fmt.Errorf("failed to get latest commit: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to get latest commit: %w", err)
 	}
 
 	lastCommitData, err := gitGetLastCommit(source, lastCommitSHA)
 	if err != nil {
 		latestSnapshot, decodeErr := decodeGitCommitSnapshot(latestCommitData)
 		if decodeErr != nil {
-			return nil, fmt.Errorf("failed to decode latest snapshot while building baseline: %w", decodeErr)
+			return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot while building baseline: %w", decodeErr)
 		}
 
 		emptyBaseline := gitCommitSnapshot{
@@ -107,55 +129,54 @@ func gitSync(source GitCfg, sharedVolumePath string) ([]byte, error) {
 
 		lastCommitData, err = json.Marshal(emptyBaseline)
 		if err != nil {
-			return nil, fmt.Errorf("failed to marshal empty baseline snapshot: %w", err)
+			return gitDiffResult{}, fmt.Errorf("failed to marshal empty baseline snapshot: %w", err)
 		}
 	}
 
 	diffData, err := gitDiff(lastCommitData, latestCommitData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to diff commits: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to diff commits: %w", err)
 	}
 
 	var diffResult gitDiffResult
 	if err := json.Unmarshal(diffData, &diffResult); err != nil {
-		return nil, fmt.Errorf("failed to decode diff result: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to decode diff result: %w", err)
 	}
+	diffResult.Name = strings.TrimSpace(sourceName)
 
 	if len(diffResult.ChangedFiles) == 0 {
-		return diffData, nil
+		return diffResult, nil
 	}
 
 	latestSnapshot, err := decodeGitCommitSnapshot(latestCommitData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode latest snapshot: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot: %w", err)
 	}
 
 	lastSnapshot, err := decodeGitCommitSnapshot(lastCommitData)
 	if err != nil {
-		return nil, fmt.Errorf("failed to decode last snapshot: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to decode last snapshot: %w", err)
 	}
 
 	exportedOldFiles, exportedNewFiles, err := writeChangedFilesFromCommits(
 		source,
+		sourceName,
 		sharedVolumePath,
 		lastSnapshot.CommitSHA,
 		latestSnapshot.CommitSHA,
 		diffResult.ChangedFiles,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to export changed files: %w", err)
+		return gitDiffResult{}, fmt.Errorf("failed to export changed files: %w", err)
 	}
 
 	diffResult.ExportedOldFiles = exportedOldFiles
 	diffResult.ExportedNewFiles = exportedNewFiles
 	diffResult.ExportedFiles = append(append([]string{}, exportedOldFiles...), exportedNewFiles...)
 	sort.Strings(diffResult.ExportedFiles)
-	finalDiffData, err := json.Marshal(diffResult)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal final diff result: %w", err)
-	}
 
-	return finalDiffData, nil
+	fmt.Printf("This is diffresult structure: %+v\n\n", diffResult)
+	return diffResult, nil
 
 }
 
@@ -530,10 +551,15 @@ func decodeGitCommitSnapshot(data []byte) (gitCommitSnapshot, error) {
 	return snapshot, nil
 }
 
-func writeChangedFilesFromCommits(source GitCfg, sharedVolumePath string, baseCommitSHA string, targetCommitSHA string, changedFiles []string) ([]string, []string, error) {
+func writeChangedFilesFromCommits(source GitCfg, sourceName string, sharedVolumePath string, baseCommitSHA string, targetCommitSHA string, changedFiles []string) ([]string, []string, error) {
 	resolvedSharedPath := strings.TrimSpace(os.ExpandEnv(sharedVolumePath))
 	if resolvedSharedPath == "" {
 		return nil, nil, fmt.Errorf("shared volume path is required")
+	}
+
+	resolvedSourceName := strings.TrimSpace(sourceName)
+	if resolvedSourceName == "" {
+		return nil, nil, fmt.Errorf("source name is required")
 	}
 
 	auth, err := resolveGitAuth(source)
@@ -593,7 +619,16 @@ func writeChangedFilesFromCommits(source GitCfg, sharedVolumePath string, baseCo
 			continue
 		}
 
-		rootPath := path.Join(resolvedSharedPath, matchedDir, targetCommitSHA)
+		rootPath := path.Join(resolvedSharedPath, resolvedSourceName, targetCommitSHA, matchedDir)
+
+		// Preserve the subdirectory tree: place Old/New just before the filename,
+		// not before the entire relative path.
+		// e.g. relative="manual-testing/file.md" => rootPath/manual-testing/Old/file.md
+		relDir := path.Dir(relativePath)
+		relFile := path.Base(relativePath)
+		if relDir == "." {
+			relDir = ""
+		}
 
 		if baseTree != nil {
 			baseContent, foundInBase, readErr := readFileFromTree(baseTree, normalizedChangedPath)
@@ -602,7 +637,7 @@ func writeChangedFilesFromCommits(source GitCfg, sharedVolumePath string, baseCo
 			}
 
 			if foundInBase {
-				oldTargetPath := path.Join(rootPath, "Old", relativePath)
+				oldTargetPath := path.Join(rootPath, relDir, "Old", relFile)
 				if err := os.MkdirAll(path.Dir(oldTargetPath), 0o755); err != nil {
 					return nil, nil, fmt.Errorf("failed to create export directory for %s: %w", oldTargetPath, err)
 				}
@@ -621,7 +656,7 @@ func writeChangedFilesFromCommits(source GitCfg, sharedVolumePath string, baseCo
 		}
 
 		if foundInTarget {
-			newTargetPath := path.Join(rootPath, "New", relativePath)
+			newTargetPath := path.Join(rootPath, relDir, "New", relFile)
 			if err := os.MkdirAll(path.Dir(newTargetPath), 0o755); err != nil {
 				return nil, nil, fmt.Errorf("failed to create export directory for %s: %w", newTargetPath, err)
 			}
