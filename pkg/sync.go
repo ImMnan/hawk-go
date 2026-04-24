@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"strings"
+	stdsync "sync"
 	"time"
 
 	"github.com/robfig/cron/v3"
@@ -10,7 +11,15 @@ import (
 
 type Source interface {
 	Validate() error
-	Fetch() error
+	Fetch() (SourceResult, error)
+}
+
+type SourceResult struct {
+	Name           string
+	Type           string
+	GitDiff        *gitDiffResult
+	ConfluenceDiff *confluenceDiffResult
+	Err            error
 }
 
 func newSource(cfg sourceConfig) (Source, error) {
@@ -19,7 +28,7 @@ func newSource(cfg sourceConfig) (Source, error) {
 		if cfg.Git == nil {
 			return nil, fmt.Errorf("missing git config")
 		}
-		return newGitSource(*cfg.Git), nil
+		return newGitSource(*cfg.Git, cfg.Name, cfg.SharedVolume.Path), nil
 	case "confluence":
 		if cfg.Confluence == nil {
 			return nil, fmt.Errorf("missing confluence config")
@@ -37,6 +46,12 @@ func sync(c Config) error {
 		return nil
 	}
 
+	resultQueue, err := kubernetesController()
+	if err != nil {
+		return fmt.Errorf("failed to initialize kubernetes controller: %w", err)
+	}
+	defer close(resultQueue)
+
 	trigger, stop, err := syncTrigger(c)
 	if err != nil {
 		return err
@@ -51,21 +66,70 @@ func sync(c Config) error {
 		case "local-agent":
 			fmt.Printf("syncing %s using local agent\n", c.Name)
 
+			results := make(chan SourceResult, len(syncCfg.Sources))
+			var wg stdsync.WaitGroup
+
 			for _, source := range syncCfg.Sources {
-				fmt.Printf("processing source %s (%s)\n", source.Name, source.Type)
+				src := source
+				wg.Add(1)
+				go func() {
+					defer wg.Done()
+					fmt.Printf("processing source %s (%s)\n", src.Name, src.Type)
 
-				handler, err := newSource(source)
-				if err != nil {
-					return fmt.Errorf("source %s (%s): %w", source.Name, source.Type, err)
+					handler, err := newSource(src)
+					if err != nil {
+						results <- SourceResult{
+							Name: src.Name,
+							Type: src.Type,
+							Err:  fmt.Errorf("source init failed: %w", err),
+						}
+						return
+					}
+
+					if err := handler.Validate(); err != nil {
+						results <- SourceResult{
+							Name: src.Name,
+							Type: src.Type,
+							Err:  fmt.Errorf("source config invalid: %w", err),
+						}
+						return
+					}
+
+					result, err := handler.Fetch()
+					if err != nil {
+						result.Err = fmt.Errorf("source fetch failed: %w", err)
+						if result.Name == "" {
+							result.Name = src.Name
+						}
+						if result.Type == "" {
+							result.Type = src.Type
+						}
+						results <- result
+						return
+					}
+
+					results <- result
+				}()
+			}
+
+			wg.Wait()
+			close(results)
+
+			var firstErr error
+			for result := range results {
+				if result.Err != nil {
+					fmt.Printf("source %s (%s) failed: %v\n", result.Name, result.Type, result.Err)
+					if firstErr == nil {
+						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, result.Err)
+					}
+					continue
 				}
 
-				if err := handler.Validate(); err != nil {
-					return fmt.Errorf("source %s config invalid: %w", source.Name, err)
-				}
+				resultQueue <- result
+			}
 
-				if err := handler.Fetch(); err != nil {
-					return fmt.Errorf("source %s failed: %w", source.Name, err)
-				}
+			if firstErr != nil {
+				return firstErr
 			}
 		default:
 			return fmt.Errorf("unsupported sync mode: %s", syncCfg.Mode)
@@ -73,23 +137,6 @@ func sync(c Config) error {
 	}
 
 	return fmt.Errorf("sync trigger stopped for %s", c.Name)
-
-	/*
-		sync is supposed to run as a go routine.
-		We need to make sure that the sync is triggering operations as per the schedule cron
-		the the cron is triggered
-		Sync is supposed to run a for loop on source:
-		   get the diffed files from the gitSync
-		   all files much be put to sharedVolume path,
-		   along with the additional sources.dirs paths.
-		   all files much be prefixed with their commit ids (something like a - or _)
-		   Once all files are saved into the shared volume, we need to trigger the agent,
-		   The agent will be triggered in the kubernetes
-		   Agent reads and processes the data, returns the output
-		   the output them must be placed into the database i.e. database.type
-		this
-
-	*/
 
 }
 

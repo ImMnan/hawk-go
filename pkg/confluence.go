@@ -9,6 +9,14 @@ type confluenceSource struct {
 	cfg ConfluenceCfg
 }
 
+type confluenceDiffResult struct {
+	BaseFile     string   `json:"baseFile"`
+	TargetFile   string   `json:"targetFile"`
+	ChangedFiles []string `json:"changedFiles"`
+	DeletedFiles []string `json:"deletedFiles"`
+	AddedFiles   []string `json:"addedFiles"`
+}
+
 func newConfluenceSource(cfg ConfluenceCfg) Source {
 	return confluenceSource{cfg: cfg}
 }
@@ -31,11 +39,14 @@ func (c confluenceSource) Validate() error {
 	return nil
 }
 
-func (c confluenceSource) Fetch() error {
-	_, err := confluenceSync(c.cfg)
-	return err
+func (c confluenceSource) Fetch() (SourceResult, error) {
+	return SourceResult{
+		Type: "confluence",
+	}, nil
 }
 
-func confluenceSync(source ConfluenceCfg) ([]byte, error) {
-	return nil, nil
-}
+//
+//func confluenceSync(source ConfluenceCfg) (confluenceDiffResult, error) {
+//	return confluenceDiffResult{}, nil
+//}
+//
