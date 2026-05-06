@@ -7,8 +7,12 @@ spec:
     spec:
       containers:
       - name: dummy-container
-        image: busybox
-        command: ["sh", "-c", "ls -l $HOME/Desktop/ && sleep 3600"]
+        image: busybox:latest
+        command: ["sh", "-c", "ls -l $HOME/Desktop/ && sleep 300"]
+        env: 
+        - name: SOURCE_RESULT
+          value: |-
+          {"name": "basic-git"}
         volumeMounts:
         - mountPath: "$HOME/Desktop/"
           name: hawk-shared-volume
