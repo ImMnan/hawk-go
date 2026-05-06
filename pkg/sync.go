@@ -2,8 +2,6 @@ package pkg
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -135,7 +133,7 @@ func sync(c Config) error {
 				}
 
 				doneFilePath := buildDoneFilePath(result.SharedVolumePath, result.Name)
-				if err := deleteStaleDoneFile(doneFilePath); err != nil {
+				if err := deleteStaleDoneFiles(doneFilePath); err != nil {
 					if firstErr == nil {
 						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
 					}
@@ -155,6 +153,12 @@ func sync(c Config) error {
 				fmt.Printf("launch metadata source=%s job=%s doneFile=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.DoneFilePath)
 			}
 
+			if len(launches) > 0 {
+				if err := waitForDoneSignals(launches); err != nil {
+					return err
+				}
+			}
+
 			if firstErr != nil {
 				return firstErr
 			}
@@ -166,26 +170,6 @@ func sync(c Config) error {
 	return fmt.Errorf("sync trigger stopped for %s", c.Name)
 
 }
-
-func deleteStaleDoneFile(doneFilePath string) error {
-	path := strings.TrimSpace(doneFilePath)
-	if path == "" {
-		return nil
-	}
-
-	err := os.Remove(path)
-	if err == nil {
-		fmt.Printf("deleted stale done signal: %s\n", path)
-		return nil
-	}
-
-	if os.IsNotExist(err) {
-		return nil
-	}
-
-	return fmt.Errorf("delete stale done signal %s: %w", path, err)
-}
-
 func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	if c.Sync.Schedule == "" {
 		return nil, nil, fmt.Errorf("sync schedule is required for %s", c.Name)
@@ -214,14 +198,4 @@ func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	}
 
 	return trigger, stop, nil
-}
-
-func buildDoneFilePath(sharedVolumePath, sourceName string) string {
-	resolvedSharedPath := strings.TrimSpace(os.ExpandEnv(sharedVolumePath))
-	resolvedSourceName := strings.TrimSpace(sourceName)
-	if resolvedSharedPath == "" || resolvedSourceName == "" {
-		return ""
-	}
-
-	return filepath.Join(resolvedSharedPath, resolvedSourceName, "done.json")
 }

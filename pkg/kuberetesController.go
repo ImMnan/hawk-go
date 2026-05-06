@@ -190,6 +190,30 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		Name:  "SOURCE_RESULT",
 		Value: string(resultJSON),
 	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_RESULT_PAYLOAD",
+		Value: string(resultJSON),
+	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_NAME",
+		Value: result.Name,
+	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_TYPE",
+		Value: result.Type,
+	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_SHARED_VOLUME_PATH",
+		Value: result.SharedVolumePath,
+	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_JOB_NAME",
+		Value: jobName,
+	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "SOURCE_DONE_FILE_PATH",
+		Value: meta.DoneFilePath,
+	})
 
 	if mountPath != "" {
 		container.VolumeMounts = upsertSharedVolumeMount(container.VolumeMounts, mountPath)
@@ -238,14 +262,18 @@ func upsertEnv(envs []corev1.EnvVar, env corev1.EnvVar) []corev1.EnvVar {
 }
 
 func upsertSharedVolumeMount(mounts []corev1.VolumeMount, mountPath string) []corev1.VolumeMount {
+	sharedVolumeName := os.Getenv("SHARED_VOLUME_NAME")
+	if sharedVolumeName == "" {
+		sharedVolumeName = "hawk-shared-volume"
+	}
 	for i := range mounts {
-		if mounts[i].Name == "hawk-shared-volume" {
+		if mounts[i].Name == sharedVolumeName {
 			mounts[i].MountPath = mountPath
 			return mounts
 		}
 	}
 	return append(mounts, corev1.VolumeMount{
-		Name:      "hawk-shared-volume",
+		Name:      sharedVolumeName,
 		MountPath: mountPath,
 	})
 }
