@@ -2,6 +2,8 @@ package pkg
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -15,11 +17,12 @@ type Source interface {
 }
 
 type SourceResult struct {
-	Name           string
-	Type           string
-	GitDiff        *gitDiffResult
-	ConfluenceDiff *confluenceDiffResult
-	Err            error
+	Name             string
+	Type             string
+	SharedVolumePath string
+	GitDiff          *gitDiffResult
+	ConfluenceDiff   *confluenceDiffResult
+	Err              error
 }
 
 func newSource(cfg sourceConfig) (Source, error) {
@@ -46,11 +49,15 @@ func sync(c Config) error {
 		return nil
 	}
 
-	resultQueue, err := kubernetesController()
+	clientSet, err := kubernetesInit()
 	if err != nil {
-		return fmt.Errorf("failed to initialize kubernetes controller: %w", err)
+		return fmt.Errorf("failed to initialize kubernetes client: %w", err)
 	}
-	defer close(resultQueue)
+
+	templateJob, err := loadJobTemplate(syncCfg.Template)
+	if err != nil {
+		return fmt.Errorf("failed to load job template: %w", err)
+	}
 
 	trigger, stop, err := syncTrigger(c)
 	if err != nil {
@@ -96,6 +103,7 @@ func sync(c Config) error {
 					}
 
 					result, err := handler.Fetch()
+					result.SharedVolumePath = src.SharedVolume.Path
 					if err != nil {
 						result.Err = fmt.Errorf("source fetch failed: %w", err)
 						if result.Name == "" {
@@ -116,6 +124,7 @@ func sync(c Config) error {
 			close(results)
 
 			var firstErr error
+			launches := make([]jobLaunchMetadata, 0, len(syncCfg.Sources))
 			for result := range results {
 				if result.Err != nil {
 					fmt.Printf("source %s (%s) failed: %v\n", result.Name, result.Type, result.Err)
@@ -125,7 +134,25 @@ func sync(c Config) error {
 					continue
 				}
 
-				resultQueue <- result
+				doneFilePath := buildDoneFilePath(result.SharedVolumePath, result.Name)
+				if err := deleteStaleDoneFile(doneFilePath); err != nil {
+					if firstErr == nil {
+						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
+					}
+					continue
+				}
+
+				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
+				if err != nil {
+					fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
+					if firstErr == nil {
+						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
+					}
+					continue
+				}
+
+				launches = append(launches, launchMeta)
+				fmt.Printf("launch metadata source=%s job=%s doneFile=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.DoneFilePath)
 			}
 
 			if firstErr != nil {
@@ -138,6 +165,25 @@ func sync(c Config) error {
 
 	return fmt.Errorf("sync trigger stopped for %s", c.Name)
 
+}
+
+func deleteStaleDoneFile(doneFilePath string) error {
+	path := strings.TrimSpace(doneFilePath)
+	if path == "" {
+		return nil
+	}
+
+	err := os.Remove(path)
+	if err == nil {
+		fmt.Printf("deleted stale done signal: %s\n", path)
+		return nil
+	}
+
+	if os.IsNotExist(err) {
+		return nil
+	}
+
+	return fmt.Errorf("delete stale done signal %s: %w", path, err)
 }
 
 func syncTrigger(c Config) (<-chan time.Time, func(), error) {
@@ -168,4 +214,14 @@ func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	}
 
 	return trigger, stop, nil
+}
+
+func buildDoneFilePath(sharedVolumePath, sourceName string) string {
+	resolvedSharedPath := strings.TrimSpace(os.ExpandEnv(sharedVolumePath))
+	resolvedSourceName := strings.TrimSpace(sourceName)
+	if resolvedSharedPath == "" || resolvedSourceName == "" {
+		return ""
+	}
+
+	return filepath.Join(resolvedSharedPath, resolvedSourceName, "done.json")
 }
