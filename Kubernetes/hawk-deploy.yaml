@@ -1,0 +1,176 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: hawk-controller-role
+  namespace: hawk
+rules:
+  - apiGroups: [""]
+    resources: ["pods", "services", "configmaps", "secrets", "persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: hawk-controller-rb
+  namespace: hawk
+subjects:
+  - kind: ServiceAccount
+    name: hawk-sa
+    namespace: hawk
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: hawk-controller-role
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: hawk-config
+  namespace: hawk
+data:
+  configlist.yaml: |
+    - name: perfecto-doc
+      type: doc
+      id: perfecto-doc-12451
+      description: "this is a sample doc sync"
+      sync:
+        enabled: true
+        mode: local-agent
+        image: py-quant-ai:latest
+        schedule: "* * * * *"
+        template: /etc/hawk/template/job-git.yaml
+        sources:
+          - type: git
+            name: basic-git
+            sharedVolume:
+              path: /data/shared
+            git:
+              url: "https://github.com/ImMnan/doc-test.git"
+              branch: main
+              dirList: ["content/Perfecto"]
+              ignoreDirList: ["content/Perfecto/rest-api"]
+              credentials:
+                type: secret
+                name: git-secret-token
+                path: /etc/hawk/secrets
+        databases:
+          - type: mongo
+            name: local-mongo
+            connection:
+              serviceName: mongo-svc
+            path: /data/shared
+            credentials:
+              type: secret
+              name: name-secret-token
+          - type: fs
+            name: local-fs
+            path: /data/shared
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: job-template
+  namespace: hawk
+data:
+  job-git.yaml: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: any-dummy-job
+    spec:
+      backoffLimit: 10
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: dummy-container
+              image: busybox:latest
+              command: ["sh", "-c", "ls -la /data/shared && sleep 30"]
+              env:
+                - name: SOURCE_RESULT
+                  value: "{}"
+              volumeMounts:
+                - name: hawk-shared-volume
+                  mountPath: /data/shared
+          volumes:
+            - name: hawk-shared-volume
+              persistentVolumeClaim:
+                claimName: hawk-shared-pvc
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: hawk-shared-pvc
+  namespace: hawk
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: hawk
+  namespace: hawk
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: hawk
+  template:
+    metadata:
+      labels:
+        app: hawk
+    spec:
+      serviceAccountName: hawk-sa
+      containers:
+      - name: hawk-ctr
+        image: hawk-go:latest
+        imagePullPolicy: IfNotPresent
+        env:
+          - name: HAWK_CONFIG_PATH
+            value: /etc/hawk/configlist.yaml
+          - name: WORKING_NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+        resources:
+          requests:
+            memory: "256Mi"
+            cpu: "250m"
+          limits:
+            memory: "1024Mi"
+            cpu: "500m" 
+
+        volumeMounts:
+          - name: hawk-config
+            mountPath: /etc/hawk/configlist.yaml
+            readOnly: true
+          - name: job-template
+            mountPath: /etc/hawk/template/job-git.yaml
+            readOnly: true
+          - name: hawk-shared-volume
+            mountPath: /data/shared
+          - name: git-token-secret
+            mountPath: /etc/hawk/secrets/git-secret-token
+            readOnly: true
+            
+      volumes:
+        - name: hawk-config
+          configMap:
+            name: hawk-config
+        - name: job-template
+          configMap: 
+            name: job-template
+        - name: hawk-shared-volume
+          persistentVolumeClaim:
+            claimName: hawk-shared-pvc
+        - name: git-token-secret
+          secret:
+            secretName: git-secret-token
+            optional: true
