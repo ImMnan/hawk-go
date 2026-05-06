@@ -3,6 +3,7 @@ package pkg
 import (
 	"fmt"
 	"os"
+	"strings"
 	stdsync "sync"
 
 	"gopkg.in/yaml.v3"
@@ -22,6 +23,8 @@ type SyncConfig struct {
 	Enabled   bool
 	Mode      string
 	AgentType string `yaml:"agentType"`
+	Image     string `yaml:"image"`
+	Template  string `yaml:"template"`
 	Schedule  string
 	Sources   []sourceConfig
 	Database  databaseConfig
@@ -105,8 +108,14 @@ func Run() {
 func init_hawk() (ConfList, error) {
 
 	// This function is main initialisation function, tieng all other sub-init functions.
-	//	const configPath = "/etc/hawk/configlist.yaml"
-	const configPath = "/Users/mpatel/Documents/GitHub/hawk-go/configlist.yaml"
+	configPath := strings.TrimSpace(os.Getenv("HAWK_CONFIG_PATH"))
+	if configPath == "" {
+		configPath = "/etc/hawk/configlist.yaml"
+	}
+	if _, err := os.Stat(configPath); err != nil {
+		// Local development fallback when the container path does not exist.
+		configPath = "configlist.yaml"
+	}
 	configData, err := os.ReadFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("unable to read config file %s: %w", configPath, err)
