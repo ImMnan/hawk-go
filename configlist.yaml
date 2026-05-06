@@ -10,6 +10,7 @@
     #  path: $HOME/Desktop/     
     schedule: "* * * * * "
     template: templates/job-git.yaml
+    productName: perfecto
     sources: 
     - type: git
       name: basic-git

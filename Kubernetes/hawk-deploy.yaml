@@ -101,16 +101,10 @@ data:
               env:
                 - name: SOURCE_RESULT
                   value: "{}"
-                - name: SOURCE_RESULT_PAYLOAD
-                  value: "{}"
                 - name: SOURCE_NAME
                   value: "mock-source"
-                - name: SOURCE_TYPE
-                  value: "mock"
                 - name: SOURCE_SHARED_VOLUME_PATH
                   value: "/data/shared"
-                - name: SOURCE_JOB_NAME
-                  value: "mock-job"
                 - name: SOURCE_DONE_FILE_PATH
                   value: "/data/shared/mock-source/done-mock-source.json"
               volumeMounts:

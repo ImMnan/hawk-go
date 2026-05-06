@@ -191,24 +191,8 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		Value: string(resultJSON),
 	})
 	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_RESULT_PAYLOAD",
-		Value: string(resultJSON),
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_NAME",
-		Value: result.Name,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_TYPE",
-		Value: result.Type,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
 		Name:  "SOURCE_SHARED_VOLUME_PATH",
 		Value: result.SharedVolumePath,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_JOB_NAME",
-		Value: jobName,
 	})
 	container.Env = upsertEnv(container.Env, corev1.EnvVar{
 		Name:  "SOURCE_DONE_FILE_PATH",
