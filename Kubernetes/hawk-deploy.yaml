@@ -155,7 +155,9 @@ spec:
               fieldRef:
                 fieldPath: metadata.namespace
           - name: SHARED_VOLUME_NAME
-            value: hawk-shared-volume      
+            value: hawk-shared-volume 
+          - name: HAWK_API_SERVER_SVC
+            value: "hawk-test-svc:3000"       
         resources:
           requests:
             memory: "256Mi"
