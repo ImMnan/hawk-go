@@ -9,7 +9,7 @@
     #sharedVolume:
     #  path: $HOME/Desktop/     
     schedule: "* * * * * "
-    template: /opt/template/git-job-template.yaml
+    template: templates/job-git.yaml
     sources: 
     - type: git
       name: basic-git
