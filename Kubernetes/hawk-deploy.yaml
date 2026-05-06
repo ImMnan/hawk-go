@@ -39,14 +39,14 @@ data:
       sync:
         enabled: true
         mode: local-agent
-        image: py-quant-ai:latest
+        image: busybox:latest
         schedule: "* * * * *"
         template: /etc/hawk/template/job-git.yaml
         sources:
           - type: git
             name: basic-git
             sharedVolume:
-              path: /data/shared
+              path: /opt/hawk-data
             git:
               url: "https://github.com/ImMnan/doc-test.git"
               branch: main
@@ -61,13 +61,13 @@ data:
             name: local-mongo
             connection:
               serviceName: mongo-svc
-            path: /data/shared
+            path: /opt/hawk-data
             credentials:
               type: secret
               name: name-secret-token
           - type: fs
             name: local-fs
-            path: /data/shared
+            path: /opt/hawk-data
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -85,6 +85,12 @@ data:
       template:
         spec:
           restartPolicy: OnFailure
+          securityContext:
+            runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
+            fsGroup: 65532
+            fsGroupChangePolicy: OnRootMismatch
           containers:
             - name: dummy-container
               image: busybox:latest
@@ -92,24 +98,34 @@ data:
               args:
                 - |
                   set -eu
-                  ls -la /data/shared
-                  done_path="${SOURCE_DONE_FILE_PATH:-/data/shared/mock/done-mock.json}"
+                  ls -la /opt/hawk-data
+                  done_path="${SOURCE_DONE_FILE_PATH:-/opt/hawk-data/mock/done-mock.json}"
                   mkdir -p "$(dirname "$done_path")"
-                  printf '{"status":"done","message":"mock child completed"}\n' > "$done_path"
+                  cat > "$done_path" <<'JSON'
+                  {
+                    "title":"testing the post API",
+                    "source_name":"basic-git",
+                    "commit_id":"hsd767ebns877ewnjsh539v4",
+                    "link":"https://www.google.com",
+                    "what_changed":"Example for the ''Release Notes'' Category => Added a POST API to insert the documents in the MOngoDB. hawk will use this API to push dcuments in the MOngoDB after the python and AI app creates it and puts it in a folder",
+                    "product_name":"perfecto",
+                    "tag":"release_notes"
+                  }
+                  JSON
                   echo "wrote done file to $done_path"
                   sleep 30
               env:
                 - name: SOURCE_RESULT
                   value: "{}"
                 - name: SOURCE_NAME
-                  value: "mock-source"
+                  value: "basic-git"
                 - name: SOURCE_SHARED_VOLUME_PATH
-                  value: "/data/shared"
+                  value: "/opt/hawk-data/"
                 - name: SOURCE_DONE_FILE_PATH
-                  value: "/data/shared/mock-source/done-mock-source.json"
+                  value: "/opt/hawk-data/basic-git/done-basic-git.json"
               volumeMounts:
                 - name: hawk-shared-volume
-                  mountPath: /data/shared
+                  mountPath: /opt/hawk-data/
           volumes:
             - name: hawk-shared-volume
               persistentVolumeClaim:
@@ -143,9 +159,15 @@ spec:
         app: hawk
     spec:
       serviceAccountName: hawk-sa
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: hawk-go:latest
+        image: immnan/hawk:0.1.0
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
@@ -168,13 +190,13 @@ spec:
 
         volumeMounts:
           - name: hawk-config
-            mountPath: /etc/hawk/configlist.yaml
+            mountPath: /etc/hawk/
             readOnly: true
           - name: job-template
-            mountPath: /etc/hawk/template/job-git.yaml
+            mountPath: /etc/hawk/template/
             readOnly: true
           - name: hawk-shared-volume
-            mountPath: /data/shared
+            mountPath: /opt/hawk-data/
           - name: git-token-secret
             mountPath: /etc/hawk/secrets/git-secret-token
             readOnly: true
