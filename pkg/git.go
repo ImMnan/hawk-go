@@ -105,7 +105,11 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string) (gitDiff
 
 	// use mongo libraries to get the last commit id for the name of the source, which is also source.Name
 	// for now, let;s hard code the last commit id:
-	lastCommitSHA := "66684777c6fc74c8fc85c13dfa3143fb551b56e3"
+	//lastCommitSHA := "66684777c6fc74c8fc85c13dfa3143fb551b56e3"
+	lastCommitSHA, err := getLastCommitId(sourceName)
+	if err != nil {
+		return gitDiffResult{}, fmt.Errorf("failed to get last commit id: %w", err)
+	}
 
 	latestCommitData, err := gitGetLatestCommit(source)
 	if err != nil {

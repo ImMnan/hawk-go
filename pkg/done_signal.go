@@ -1,6 +1,7 @@
 package pkg
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -105,18 +106,49 @@ func waitForDoneSignal(meta jobLaunchMetadata, timeout time.Duration) error {
 	}
 
 	deadline := time.Now().Add(timeout)
+	var lastReadErr error
 	for {
 		if fileExists(donePath) {
-			fmt.Printf("done signal received for source=%s job=%s path=%s\n", meta.SourceName, meta.JobName, donePath)
-			return nil
+			payload, err := readDonePayload(donePath, meta.SourceName)
+			if err != nil {
+				lastReadErr = err
+			} else {
+				if err := postResultToHawkAPI(payload); err != nil {
+					return fmt.Errorf("post done payload for source=%s job=%s: %w", meta.SourceName, meta.JobName, err)
+				}
+
+				fmt.Printf("done signal received and posted for source=%s job=%s path=%s\n", meta.SourceName, meta.JobName, donePath)
+				return nil
+			}
 		}
 
 		if time.Now().After(deadline) {
+			if lastReadErr != nil {
+				return fmt.Errorf("timeout waiting for readable done signal for source=%s job=%s path=%s: %w", meta.SourceName, meta.JobName, donePath, lastReadErr)
+			}
 			return fmt.Errorf("timeout waiting for done signal for source=%s job=%s path=%s", meta.SourceName, meta.JobName, donePath)
 		}
 
 		time.Sleep(doneWaitPollInterval)
 	}
+}
+
+func readDonePayload(donePath, fallbackSourceName string) (doneJson, error) {
+	raw, err := os.ReadFile(donePath)
+	if err != nil {
+		return doneJson{}, fmt.Errorf("read done file %s: %w", donePath, err)
+	}
+
+	var payload doneJson
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		return doneJson{}, fmt.Errorf("parse done file %s: %w", donePath, err)
+	}
+
+	if strings.TrimSpace(payload.SourceName) == "" {
+		payload.SourceName = strings.TrimSpace(fallbackSourceName)
+	}
+
+	return payload, nil
 }
 
 func fileExists(path string) bool {
