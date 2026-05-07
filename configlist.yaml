@@ -8,14 +8,14 @@
     image: py-quant-ai:latest 
     #sharedVolume:
     #  path: $HOME/Desktop/     
-    schedule: "* * * * * "
+    schedule: "* * * * *"
     template: templates/job-git.yaml
     productName: perfecto
     sources: 
     - type: git
       name: basic-git
       sharedVolume:
-        path: $HOME/Desktop/  
+        path: $HOME/Desktop/ 
       git:
         url: "https://github.com/ImMnan/doc-test.git"
         branch: main
@@ -25,20 +25,16 @@
           type: secret
           name: git-secret-token
           path: $HOME
-    databases: 
-    - type: mongo
-      name: local-mongo
+    apiServer:
+    - type: hawk-api-server
+      name: hawk-api-service
       connection:
-        serviceName: mongo-svc
+        serviceName: hawk-test-svc
         # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
       # endpoint: 10.2.24.1:2121
-      path: $HOME/Desktop/
       credentials:
         type: secret
         name: name-secret-token
-    - type: fs
-      name: local-fs
-      path: $HOME/Documents/  
   
   
 #- name: blazemeter-doc
