@@ -40,9 +40,37 @@ func newSource(cfg sourceConfig) (Source, error) {
 	}
 }
 
+func loadLatestConfig(base Config) (Config, error) {
+	confList, err := init_hawk()
+	if err != nil {
+		return Config{}, err
+	}
+
+	baseID := strings.TrimSpace(base.ID)
+	if baseID != "" {
+		for _, cfg := range confList {
+			if strings.TrimSpace(cfg.ID) == baseID {
+				return cfg, nil
+			}
+		}
+	}
+
+	baseName := strings.TrimSpace(base.Name)
+	for _, cfg := range confList {
+		if strings.EqualFold(strings.TrimSpace(cfg.Name), baseName) {
+			return cfg, nil
+		}
+	}
+
+	if baseID != "" {
+		return Config{}, fmt.Errorf("config not found in latest configlist (id=%s name=%s)", baseID, baseName)
+	}
+
+	return Config{}, fmt.Errorf("config not found in latest configlist (name=%s)", baseName)
+}
+
 func sync(c Config) error {
-	syncCfg := c.Sync
-	if !syncCfg.Enabled {
+	if !c.Sync.Enabled {
 		fmt.Printf("sync disabled for %s\n", c.Name)
 		return nil
 	}
@@ -50,11 +78,6 @@ func sync(c Config) error {
 	clientSet, err := kubernetesInit()
 	if err != nil {
 		return fmt.Errorf("failed to initialize kubernetes client: %w", err)
-	}
-
-	templateJob, err := loadJobTemplate(syncCfg.Template)
-	if err != nil {
-		return fmt.Errorf("failed to load job template: %w", err)
 	}
 
 	trigger, stop, err := syncTrigger(c)
@@ -66,6 +89,24 @@ func sync(c Config) error {
 	fmt.Printf("syncing %s\n of type %s as per cron %v", c.Name, c.Type, c.Sync.Schedule)
 	for triggeredAt := range trigger {
 		fmt.Printf("sync trigger fired for %s at %s\n", c.Name, triggeredAt.Format(time.RFC3339))
+
+		latestCfg, err := loadLatestConfig(c)
+		if err != nil {
+			return fmt.Errorf("failed to refresh configlist for %s: %w", c.Name, err)
+		}
+
+		c = latestCfg
+		syncCfg := c.Sync
+
+		if !syncCfg.Enabled {
+			fmt.Printf("sync disabled for %s in latest config, stopping worker\n", c.Name)
+			return nil
+		}
+
+		templateJob, err := loadJobTemplate(syncCfg.Template)
+		if err != nil {
+			return fmt.Errorf("failed to load job template: %w", err)
+		}
 
 		switch syncCfg.Mode {
 		case "local-agent":

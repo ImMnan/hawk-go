@@ -27,6 +27,8 @@ func getLastCommitId(sourceName string) (string, error) {
 	}
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/api/document/getlastcommitid/%v", apiServerEndpoint, sourceName), nil)
+	fmt.Printf("%v\n", req)
+
 	if err != nil {
 		log.Fatal(err)
 	}
