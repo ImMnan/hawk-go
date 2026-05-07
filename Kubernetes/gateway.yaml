@@ -31,7 +31,7 @@ spec:
     - matches:
         - path:
             type: PathPrefix
-            value: /api
+            value: /
       backendRefs:
         - name: hawk-apiserver-svc
           port: 3000
