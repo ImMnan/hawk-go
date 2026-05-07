@@ -56,18 +56,6 @@ data:
                 type: secret
                 name: git-secret-token
                 path: /etc/hawk/secrets
-        databases:
-          - type: mongo
-            name: local-mongo
-            connection:
-              serviceName: mongo-svc
-            path: /opt/hawk-data
-            credentials:
-              type: secret
-              name: name-secret-token
-          - type: fs
-            name: local-fs
-            path: /opt/hawk-data
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -167,7 +155,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: immnan/hawk:0.1.0
+        image: immnan/hawk:0.1.1
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
