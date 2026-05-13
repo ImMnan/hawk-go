@@ -20,14 +20,14 @@ type Config struct {
 }
 
 type SyncConfig struct {
-	Enabled   bool
-	Mode      string
-	AgentType string `yaml:"agentType"`
-	Image     string `yaml:"image"`
-	Template  string `yaml:"template"`
-	Schedule  string
-	Sources   []sourceConfig
-	Database  databaseConfig
+	Enabled    bool
+	Mode       string
+	AgentType  string `yaml:"agentType"`
+	Image      string `yaml:"image"`
+	Template   string `yaml:"template"`
+	Schedule   string
+	Sources    []sourceConfig
+	APIServers apiServerCfg `yaml:"apiServer"`
 }
 
 type credentialsConfig struct {
@@ -63,16 +63,13 @@ type ConfluenceCfg struct {
 	Credentials credentialsConfig `yaml:"credentials"`
 }
 
-type databaseConfig struct {
-	Type        string
-	Connection  databaseConnectionConfig
-	Credentials credentialsConfig
-}
-
-type databaseConnectionConfig struct {
-	ServiceName string `yaml:"serviceName"`
-	Endpoint    string
-	Path        string
+type apiServerCfg struct {
+	Type       string `yaml:"type"`
+	Name       string `yaml:"name"`
+	Connection struct {
+		SvcName string `yaml:"serviceName"`
+	} `yaml:"connection"`
+	Credentials credentialsConfig `yaml:"credentials"`
 }
 
 func Run() {

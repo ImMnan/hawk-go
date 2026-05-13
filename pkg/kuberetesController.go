@@ -116,15 +116,18 @@ type sourceResultPayload struct {
 }
 
 type jobLaunchMetadata struct {
-	SourceName   string
-	JobName      string
-	DoneFilePath string
+	SourceName     string
+	JobName        string
+	OutputFilePath string
 }
 
 func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job, clientSet *kubernetes.Clientset) (jobLaunchMetadata, error) {
 	meta := jobLaunchMetadata{
-		SourceName:   strings.TrimSpace(result.Name),
-		DoneFilePath: buildDoneFilePath(result.SharedVolumePath, result.Name),
+		SourceName:     strings.TrimSpace(result.Name),
+		OutputFilePath: buildOutputFilePath(result),
+	}
+	if strings.TrimSpace(meta.OutputFilePath) == "" {
+		return meta, fmt.Errorf("missing output file path for source %s (requires source name, shared volume path, and git target commit)", result.Name)
 	}
 
 	if result.Err != nil {
@@ -193,10 +196,6 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	container.Env = upsertEnv(container.Env, corev1.EnvVar{
 		Name:  "SOURCE_SHARED_VOLUME_PATH",
 		Value: result.SharedVolumePath,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_DONE_FILE_PATH",
-		Value: meta.DoneFilePath,
 	})
 
 	if mountPath != "" {

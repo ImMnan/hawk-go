@@ -173,14 +173,6 @@ func sync(c Config) error {
 					continue
 				}
 
-				doneFilePath := buildDoneFilePath(result.SharedVolumePath, result.Name)
-				if err := deleteStaleDoneFiles(doneFilePath); err != nil {
-					if firstErr == nil {
-						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
-					}
-					continue
-				}
-
 				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
 				if err != nil {
 					fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
@@ -191,11 +183,15 @@ func sync(c Config) error {
 				}
 
 				launches = append(launches, launchMeta)
-				fmt.Printf("launch metadata source=%s job=%s doneFile=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.DoneFilePath)
+				fmt.Printf("launch metadata source=%s job=%s outputFile=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.OutputFilePath)
 			}
 
 			if len(launches) > 0 {
-				if err := waitForDoneSignals(launches); err != nil {
+				if err := waitForOutputFiles(launches); err != nil {
+					return err
+				}
+
+				if err := postOutputFiles(launches); err != nil {
 					return err
 				}
 			}
@@ -211,6 +207,7 @@ func sync(c Config) error {
 	return fmt.Errorf("sync trigger stopped for %s", c.Name)
 
 }
+
 func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	if c.Sync.Schedule == "" {
 		return nil, nil, fmt.Errorf("sync schedule is required for %s", c.Name)
