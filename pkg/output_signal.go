@@ -85,18 +85,26 @@ func waitForOutputFiles(launches []jobLaunchMetadata) error {
 	return nil
 }
 
-func postOutputFiles(launches []jobLaunchMetadata) error {
+func postOutputFiles(launches []jobLaunchMetadata, apiServerEndpoint string) error {
+	failures := make([]string, 0)
+
 	for _, launch := range launches {
 		payload, err := readOutputPayload(launch.OutputFilePath)
 		if err != nil {
-			return fmt.Errorf("read output payload for source=%s job=%s: %w", launch.SourceName, launch.JobName, err)
+			failures = append(failures, fmt.Sprintf("source=%s job=%s read error: %v", launch.SourceName, launch.JobName, err))
+			continue
 		}
 
-		if err := postResultToHawkAPI(payload); err != nil {
-			return fmt.Errorf("post output payload for source=%s job=%s: %w", launch.SourceName, launch.JobName, err)
+		if err := postResultToHawkAPI(payload, apiServerEndpoint); err != nil {
+			failures = append(failures, fmt.Sprintf("source=%s job=%s post error: %v", launch.SourceName, launch.JobName, err))
+			continue
 		}
 
 		fmt.Printf("output file posted for source=%s job=%s path=%s\n", launch.SourceName, launch.JobName, launch.OutputFilePath)
+	}
+
+	if len(failures) > 0 {
+		return fmt.Errorf("failed to post %d/%d output payloads: %s", len(failures), len(launches), strings.Join(failures, "; "))
 	}
 
 	return nil
