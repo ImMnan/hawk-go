@@ -26,7 +26,7 @@
           name: git-secret-token
           path: $HOME
     apiServer:
-    - type: hawk-api-server
+      type: hawk-api-server
       name: hawk-api-service
       connection:
         serviceName: hawk-test-svc
