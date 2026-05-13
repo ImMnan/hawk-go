@@ -1,6 +1,8 @@
 package pkg
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -8,14 +10,8 @@ import (
 	"os"
 )
 
-type doneJson struct {
-	Title       string `json:"title"`
-	SourceName  string `json:"source_name"`
-	CommitId    string `json:"commit_id,omitempty"`
-	Link        string `json:"link,omitempty"`
-	WhatChanged string `json:"what_changed,omitempty"`
-	ProductName string `json:"product_name,omitempty"`
-	Tag         string `json:"tag,omitempty"`
+type gitLastCommitResponse struct {
+	CommitId string `json:"commit_id"`
 }
 
 func getLastCommitId(sourceName string) (string, error) {
@@ -27,7 +23,46 @@ func getLastCommitId(sourceName string) (string, error) {
 	}
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/api/document/getlastcommitid/%v", apiServerEndpoint, sourceName), nil)
-	fmt.Printf("%v\n", req)
+	fmt.Printf("hitting API endpoint: %v\n", req)
+
+	if err != nil {
+		log.Fatal(err)
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer resp.Body.Close()
+	bodyText, err := io.ReadAll(resp.Body)
+	if err != nil {
+		log.Fatal(err)
+	}
+	fmt.Printf("%s\n", bodyText)
+	var gitResponse gitLastCommitResponse
+	json.Unmarshal(bodyText, &gitResponse)
+
+	commitId := gitResponse.CommitId
+	fmt.Printf("Last commit id for %v is %v\n", sourceName, commitId)
+	return commitId, nil
+}
+
+func postResultToHawkAPI(requestBodyData []byte) error {
+
+	// This file will be placed in the shared volume - sharedVolume/source.name/commitId/output.json
+	// Use output.json as a post request payload to the below hawk API request.
+
+	// Post to http://hawk.k8s.net/api/document with bodyPayload
+	//fmt.Printf("Now posting this payload %v\n", bodyPayload)
+
+	apiServerEndpoint := os.Getenv("HAWK_API_SERVER_SVC")
+	if apiServerEndpoint == "" {
+		fmt.Println("No svc endpoint found, using hawk.k8s.net")
+		apiServerEndpoint = "hawk.k8s.net:80"
+	}
+
+	client := &http.Client{}
+	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/document/create", apiServerEndpoint), bytes.NewBuffer(requestBodyData))
+	fmt.Printf("[DEBUG] hitting API endpoint: %v\n", req)
 
 	if err != nil {
 		log.Fatal(err)
@@ -43,13 +78,5 @@ func getLastCommitId(sourceName string) (string, error) {
 	}
 	fmt.Printf("%s\n", bodyText)
 
-	commitId := "66684777c6fc74c8fc85c13dfa3143fb551b56e3"
-	return commitId, nil
-}
-
-func postResultToHawkAPI(bodyPayload doneJson) error {
-
-	// Post to http://hawk.k8s.net/api/document with bodyPayload
-	fmt.Printf("Now posting this payload %v\n", bodyPayload)
 	return nil
 }
