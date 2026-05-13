@@ -56,6 +56,16 @@ data:
                 type: secret
                 name: git-secret-token
                 path: /etc/hawk/secrets
+        apiServer:
+        - type: hawk-apiserver
+          name: hawk-api-service
+          connection:
+            serviceName: hawk-apiserver-svc
+          credentials:
+            type: secret
+            name: name-secret-token
+            path: /etc/hawk/secrets/
+                      
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -105,12 +115,8 @@ data:
               env:
                 - name: SOURCE_RESULT
                   value: "{}"
-                - name: SOURCE_NAME
-                  value: "basic-git"
                 - name: SOURCE_SHARED_VOLUME_PATH
                   value: "/opt/hawk-data/"
-                - name: SOURCE_DONE_FILE_PATH
-                  value: "/opt/hawk-data/basic-git/done-basic-git.json"
               volumeMounts:
                 - name: hawk-shared-volume
                   mountPath: /opt/hawk-data/
