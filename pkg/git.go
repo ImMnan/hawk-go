@@ -24,9 +24,10 @@ import (
 // Compare the latest with the previous commit, last commit that was sent in the func.
 
 type gitSource struct {
-	cfg              GitCfg
-	sourceName       string
-	sharedVolumePath string
+	cfg               GitCfg
+	sourceName        string
+	sharedVolumePath  string
+	apiServerEndpoint string
 }
 
 type gitFileSnapshot struct {
@@ -60,11 +61,12 @@ type gitDiffResult struct {
 	ExportedNewFiles []string `json:"exportedNewFiles,omitempty"`
 }
 
-func newGitSource(cfg GitCfg, sourceName string, sharedVolumePath string) Source {
+func newGitSource(cfg GitCfg, sourceName string, sharedVolumePath string, apiServerEndpoint string) Source {
 	return gitSource{
-		cfg:              cfg,
-		sourceName:       strings.TrimSpace(sourceName),
-		sharedVolumePath: strings.TrimSpace(sharedVolumePath),
+		cfg:               cfg,
+		sourceName:        strings.TrimSpace(sourceName),
+		sharedVolumePath:  strings.TrimSpace(sharedVolumePath),
+		apiServerEndpoint: strings.TrimSpace(apiServerEndpoint),
 	}
 }
 
@@ -89,7 +91,7 @@ func (g gitSource) Validate() error {
 }
 
 func (g gitSource) Fetch() (SourceResult, error) {
-	gitResult, err := gitSync(g.cfg, g.sourceName, g.sharedVolumePath)
+	gitResult, err := gitSync(g.cfg, g.sourceName, g.sharedVolumePath, g.apiServerEndpoint)
 	if err != nil {
 		return SourceResult{Name: g.sourceName, Type: "git"}, err
 	}
@@ -101,12 +103,12 @@ func (g gitSource) Fetch() (SourceResult, error) {
 	}, nil
 }
 
-func gitSync(source GitCfg, sourceName string, sharedVolumePath string) (gitDiffResult, error) {
+func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServerEndpoint string) (gitDiffResult, error) {
 
 	// use mongo libraries to get the last commit id for the name of the source, which is also source.Name
 	// for now, let;s hard code the last commit id:
 	//lastCommitSHA := "66684777c6fc74c8fc85c13dfa3143fb551b56e3"
-	lastCommitSHA, err := getLastCommitId(sourceName)
+	lastCommitSHA, err := getLastCommitId(sourceName, apiServerEndpoint)
 	if err != nil {
 		return gitDiffResult{}, fmt.Errorf("failed to get last commit id: %w", err)
 	}

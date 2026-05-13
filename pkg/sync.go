@@ -23,13 +23,13 @@ type SourceResult struct {
 	Err              error
 }
 
-func newSource(cfg sourceConfig) (Source, error) {
+func newSource(cfg sourceConfig, syncCfg SyncConfig) (Source, error) {
 	switch strings.ToLower(strings.TrimSpace(cfg.Type)) {
 	case "git":
 		if cfg.Git == nil {
 			return nil, fmt.Errorf("missing git config")
 		}
-		return newGitSource(*cfg.Git, cfg.Name, cfg.SharedVolume.Path), nil
+		return newGitSource(*cfg.Git, cfg.Name, cfg.SharedVolume.Path, resolveAPIServerEndpoint(syncCfg)), nil
 	case "confluence":
 		if cfg.Confluence == nil {
 			return nil, fmt.Errorf("missing confluence config")
@@ -122,7 +122,7 @@ func sync(c Config) error {
 					defer wg.Done()
 					fmt.Printf("processing source %s (%s)\n", src.Name, src.Type)
 
-					handler, err := newSource(src)
+					handler, err := newSource(src, syncCfg)
 					if err != nil {
 						results <- SourceResult{
 							Name: src.Name,
@@ -191,7 +191,7 @@ func sync(c Config) error {
 					return err
 				}
 
-				if err := postOutputFiles(launches); err != nil {
+				if err := postOutputFiles(launches, resolveAPIServerEndpoint(syncCfg)); err != nil {
 					return err
 				}
 			}

@@ -8,19 +8,30 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 )
 
 type gitLastCommitResponse struct {
 	CommitId string `json:"commit_id"`
 }
 
-func getLastCommitId(sourceName string) (string, error) {
+func resolveAPIServerEndpoint(syncCfg SyncConfig) string {
+	apiServerEndpoint := strings.TrimSpace(syncCfg.APIServers.Connection.SvcName)
+	if apiServerEndpoint != "" {
+		return apiServerEndpoint
+	}
 
-	apiServerEndpoint := os.Getenv("HAWK_API_SERVER_SVC")
+	apiServerEndpoint = strings.TrimSpace(os.Getenv("HAWK_API_SERVER_SVC"))
 	if apiServerEndpoint == "" {
-		fmt.Println("No svc endpoint found, using hawk.k8s.net")
+		fmt.Println("No api server serviceName found in config, using hawk.k8s.net:80")
 		apiServerEndpoint = "hawk.k8s.net:80"
 	}
+
+	return apiServerEndpoint
+}
+
+func getLastCommitId(sourceName, apiServerEndpoint string) (string, error) {
+
 	client := &http.Client{}
 	req, err := http.NewRequest("GET", fmt.Sprintf("http://%s/api/document/getlastcommitid/%v", apiServerEndpoint, sourceName), nil)
 	fmt.Printf("hitting API endpoint: %v\n", req)
@@ -46,19 +57,13 @@ func getLastCommitId(sourceName string) (string, error) {
 	return commitId, nil
 }
 
-func postResultToHawkAPI(requestBodyData []byte) error {
+func postResultToHawkAPI(requestBodyData []byte, apiServerEndpoint string) error {
 
 	// This file will be placed in the shared volume - sharedVolume/source.name/commitId/output.json
 	// Use output.json as a post request payload to the below hawk API request.
 
 	// Post to http://hawk.k8s.net/api/document with bodyPayload
 	//fmt.Printf("Now posting this payload %v\n", bodyPayload)
-
-	apiServerEndpoint := os.Getenv("HAWK_API_SERVER_SVC")
-	if apiServerEndpoint == "" {
-		fmt.Println("No svc endpoint found, using hawk.k8s.net")
-		apiServerEndpoint = "hawk.k8s.net:80"
-	}
 
 	client := &http.Client{}
 	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/document/create", apiServerEndpoint), bytes.NewBuffer(requestBodyData))
