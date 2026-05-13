@@ -39,7 +39,7 @@ data:
       sync:
         enabled: true
         mode: local-agent
-        image: busybox:latest
+        image: immnan/hawk-llm:0.1.1
         schedule: "* * * * *"
         template: /etc/hawk/template/job-git.yaml
         sources:
@@ -80,7 +80,7 @@ data:
     metadata:
       name: any-dummy-job
     spec:
-      backoffLimit: 10
+      backoffLimit: 3
       template:
         spec:
           restartPolicy: OnFailure
@@ -92,36 +92,7 @@ data:
             fsGroupChangePolicy: OnRootMismatch
           containers:
             - name: dummy-container
-              image: busybox:latest
-              command: ["sh", "-c"]
-              args:
-                - |
-                  set -eu
-                  ls -la /opt/hawk-data
-
-                  source_name="$(printf '%s' "${SOURCE_RESULT:-}" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-                  target_commit="$(printf '%s' "${SOURCE_RESULT:-}" | sed -n 's/.*"targetCommit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
-
-                  if [ -z "$source_name" ] || [ -z "$target_commit" ]; then
-                    echo "failed to resolve source name or target commit from SOURCE_RESULT"
-                    exit 1
-                  fi
-
-                  output_path="${SOURCE_SHARED_VOLUME_PATH%/}/${source_name}/${target_commit}/output.json"
-                  mkdir -p "$(dirname "$output_path")"
-                  cat > "$output_path" <<'JSON'
-                  {
-                    "title":"testing the post API",
-                    "source_name":"basic-git",
-                    "commit_id":"hsd767ebns877ewnjsh539v4",
-                    "link":"https://www.google.com",
-                    "what_changed":"added a new feature with red button, a funny test by Manan",
-                    "product_name":"perfecto",
-                    "tag":"critical"
-                  }
-                  JSON
-                  echo "wrote output file to $output_path"
-                  sleep 30
+              image: busybox:latest           
               env:
                 - name: SOURCE_RESULT
                   value: "{}"
@@ -141,8 +112,9 @@ metadata:
   name: hawk-shared-pvc
   namespace: hawk
 spec:
+  storageClassName: standard
   accessModes:
-    - ReadWriteOnce
+  - ReadWriteOnce
   resources:
     requests:
       storage: 2Gi
@@ -171,7 +143,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: immnan/hawk:0.2.0
+        image: immnan/hawk:0.2.1
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
