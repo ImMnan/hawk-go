@@ -160,7 +160,7 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 
 	mountPath := result.SharedVolumePath
 	if mountPath == "" {
-		mountPath = "/data"
+		return meta, fmt.Errorf("shared volume path is required for source %s to create kubernetes job", result.Name)
 	}
 
 	baseJobName := strings.ToLower(strings.TrimSpace(result.Name))
