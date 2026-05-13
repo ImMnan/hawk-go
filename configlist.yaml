@@ -35,6 +35,7 @@
       credentials:
         type: secret
         name: name-secret-token
+        path: $HOME
   
   
 #- name: blazemeter-doc

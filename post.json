@@ -1,10 +1,9 @@
-{
-    "title":"testing the post API",
-    "source_name":"basic-git",
-    "commit_id":"hsd767ebns877ewnjsh539v4",
-    "link":"https://www.google.com",
-    "what_changed":"Example for the ''Release Notes'' Category => Added a POST API to insert the documents in the MOngoDB. hawk will use this API to push dcuments in the MOngoDB after the python and AI app creates it and puts it in a folder",
-    "product_name":"perfecto",
-    "tag":"release_notes"
-
-}
+                 {
+                    "title": "testing the post API",
+                    "source_name": "basic-git",
+                    "commit_id": "hsd767ebns877ewnjsh539v4",
+                    "link": "https://www.google.com",
+                    "what_changed": "Example for the ''Release Notes'' Category => Added a POST API to insert the documents in the MOngoDB. hawk will use this API to push dcuments in the MOngoDB after the python and AI app creates it and puts it in a folder",
+                    "product_name": "perfecto",
+                    "tag": "release_notes"
+                  }
