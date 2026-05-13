@@ -68,6 +68,7 @@ type apiServerCfg struct {
 	Name       string `yaml:"name"`
 	Connection struct {
 		SvcName string `yaml:"serviceName"`
+		Port    int    `yaml:"port"`
 	} `yaml:"connection"`
 	Credentials credentialsConfig `yaml:"credentials"`
 }

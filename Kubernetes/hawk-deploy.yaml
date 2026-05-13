@@ -57,10 +57,11 @@ data:
                 name: git-secret-token
                 path: /etc/hawk/secrets
         apiServer:
-        - type: hawk-apiserver
+          type: hawk-apiserver
           name: hawk-api-service
           connection:
             serviceName: hawk-apiserver-svc
+            port: 3000
           credentials:
             type: secret
             name: name-secret-token
@@ -97,20 +98,29 @@ data:
                 - |
                   set -eu
                   ls -la /opt/hawk-data
-                  done_path="${SOURCE_DONE_FILE_PATH:-/opt/hawk-data/mock/done-mock.json}"
-                  mkdir -p "$(dirname "$done_path")"
-                  cat > "$done_path" <<'JSON'
+
+                  source_name="$(printf '%s' "${SOURCE_RESULT:-}" | sed -n 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+                  target_commit="$(printf '%s' "${SOURCE_RESULT:-}" | sed -n 's/.*"targetCommit"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')"
+
+                  if [ -z "$source_name" ] || [ -z "$target_commit" ]; then
+                    echo "failed to resolve source name or target commit from SOURCE_RESULT"
+                    exit 1
+                  fi
+
+                  output_path="${SOURCE_SHARED_VOLUME_PATH%/}/${source_name}/${target_commit}/output.json"
+                  mkdir -p "$(dirname "$output_path")"
+                  cat > "$output_path" <<'JSON'
                   {
                     "title":"testing the post API",
                     "source_name":"basic-git",
                     "commit_id":"hsd767ebns877ewnjsh539v4",
                     "link":"https://www.google.com",
-                    "what_changed":"Example for the ''Release Notes'' Category => Added a POST API to insert the documents in the MOngoDB. hawk will use this API to push dcuments in the MOngoDB after the python and AI app creates it and puts it in a folder",
+                    "what_changed":"added a new feature with red button, a funny test by Manan",
                     "product_name":"perfecto",
-                    "tag":"release_notes"
+                    "tag":"critical"
                   }
                   JSON
-                  echo "wrote done file to $done_path"
+                  echo "wrote output file to $output_path"
                   sleep 30
               env:
                 - name: SOURCE_RESULT
@@ -161,7 +171,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: immnan/hawk:0.1.1
+        image: immnan/hawk:0.2.0
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
@@ -172,8 +182,6 @@ spec:
                 fieldPath: metadata.namespace
           - name: SHARED_VOLUME_NAME
             value: hawk-shared-volume 
-          - name: HAWK_API_SERVER_SVC
-            value: "hawk-test-svc:3000"       
         resources:
           requests:
             memory: "256Mi"

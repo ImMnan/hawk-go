@@ -30,6 +30,7 @@
       name: hawk-api-service
       connection:
         serviceName: hawk-test-svc
+        port: 3000
         # IF serviceName, endpoint is ignored, endpoint is more of an external database setup
       # endpoint: 10.2.24.1:2121
       credentials:
