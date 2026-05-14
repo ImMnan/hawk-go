@@ -118,6 +118,22 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 		return gitDiffResult{}, fmt.Errorf("failed to get latest commit: %w", err)
 	}
 
+	// Check if commitID from apiserver and targetCommit from git are the same
+	// If they match, abort flow and wait for next sync cycle as per cron
+	latestSnapshot, err := decodeGitCommitSnapshot(latestCommitData)
+	if err != nil {
+		return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot: %w", err)
+	}
+
+	if lastCommitSHA == latestSnapshot.CommitSHA {
+		fmt.Printf("commitID from apiserver and targetCommit from git are same (%s) for source %s, aborting flow and waiting for next sync cycle\n", lastCommitSHA, sourceName)
+		return gitDiffResult{
+			Name:         sourceName,
+			BaseCommit:   lastCommitSHA,
+			TargetCommit: latestSnapshot.CommitSHA,
+		}, nil
+	}
+
 	lastCommitData, err := gitGetLastCommit(source, lastCommitSHA)
 	if err != nil {
 		latestSnapshot, decodeErr := decodeGitCommitSnapshot(latestCommitData)
@@ -152,11 +168,6 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 
 	if len(diffResult.ChangedFiles) == 0 {
 		return diffResult, nil
-	}
-
-	latestSnapshot, err := decodeGitCommitSnapshot(latestCommitData)
-	if err != nil {
-		return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot: %w", err)
 	}
 
 	lastSnapshot, err := decodeGitCommitSnapshot(lastCommitData)
