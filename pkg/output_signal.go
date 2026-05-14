@@ -11,7 +11,7 @@ import (
 )
 
 const (
-	commitWaitPollInterval   = 2 * time.Second
+	commitWaitPollInterval   = 60 * time.Second
 	commitWaitDefaultTimeout = 30 * time.Minute
 )
 
