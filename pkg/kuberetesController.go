@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -16,21 +17,6 @@ import (
 	"k8s.io/client-go/rest"
 	"sigs.k8s.io/yaml"
 )
-
-// This list of functions is responsible for maintaining the kubernetes objects and workloads required by the hawk project.
-
-/*
-
-- this should start/initialize a container (Specified) as a job
-- every object should have an individual job
-- this should mount the volume as (configured) in the sources.sharedVolume.path
-- The volume for these mounts should be persisted and shared with the hawk app.
-- The job should be scheduled to run at the same time as handler.Fetch() is run.
-- So the kubernetes controller can trigger job + pod creation concurrently,
-- By the time git.go processes the data and saves it to the shared volume, the job should be up and running, and the container should be able to read the data from the shared volume and process it.
-- Start the child container with specific env variables, so it knows certain things.
--
-*/
 
 func kubernetesInit() (*kubernetes.Clientset, error) {
 	// initialize kubernetes client and return the clientset
@@ -55,7 +41,7 @@ func kubernetesController(syncCfg SyncConfig) (chan SourceResult, error) {
 		- Read the sync.template file and store it in memory for later use.
 		- Process each source result and create appropriate kubernetes jobs
 	*/
-	templateJob, err := loadJobTemplate(syncCfg.Template)
+	templateJob, err := loadJobTemplate(syncCfg.JobTemplate)
 	if err != nil {
 		return nil, err
 	}
@@ -72,13 +58,13 @@ func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncC
 	*/
 	clientSet, err := kubernetesInit()
 	if err != nil {
-		fmt.Printf("failed to initialize kubernetes client: %v\n", err)
+		slog.Error("failed to initialize kubernetes client", "error", err)
 		return
 	}
 
 	for result := range resultQueue {
 		if _, err := createKubernetesJob(result, syncCfg, templateJob, clientSet); err != nil {
-			fmt.Printf("failed to create kubernetes job for source %s: %v\n", result.Name, err)
+			slog.Error("failed to create kubernetes job", "source", result.Name, "error", err)
 		}
 	}
 }
@@ -86,7 +72,7 @@ func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncC
 func loadJobTemplate(templatePath string) (*batchv1.Job, error) {
 	path := strings.TrimSpace(templatePath)
 	if path == "" {
-		return nil, fmt.Errorf("sync.template is required")
+		return nil, fmt.Errorf("sync.job-template is required")
 	}
 
 	templateBytes, err := os.ReadFile(path)
@@ -110,28 +96,30 @@ func loadJobTemplate(templatePath string) (*batchv1.Job, error) {
 type sourceResultPayload struct {
 	Name             string                `json:"name"`
 	Type             string                `json:"type"`
+	TargetCommit     string                `json:"targetCommit,omitempty"`
+	SharedVolumeName string                `json:"sharedVolumeName"`
 	SharedVolumePath string                `json:"sharedVolumePath"`
 	GitDiff          *gitDiffResult        `json:"gitDiff,omitempty"`
 	ConfluenceDiff   *confluenceDiffResult `json:"confluenceDiff,omitempty"`
 }
 
 type jobLaunchMetadata struct {
-	SourceName     string
-	JobName        string
-	OutputFilePath string
+	SourceName   string
+	JobName      string
+	Namespace    string
+	TargetCommit string
 }
 
 func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job, clientSet *kubernetes.Clientset) (jobLaunchMetadata, error) {
 	meta := jobLaunchMetadata{
-		SourceName:     strings.TrimSpace(result.Name),
-		OutputFilePath: buildOutputFilePath(result),
+		SourceName: strings.TrimSpace(result.Name),
 	}
-	if strings.TrimSpace(meta.OutputFilePath) == "" {
-		return meta, fmt.Errorf("missing output file path for source %s (requires source name, shared volume path, and git target commit)", result.Name)
+	if result.GitDiff != nil {
+		meta.TargetCommit = strings.TrimSpace(result.GitDiff.TargetCommit)
 	}
 
 	if result.Err != nil {
-		fmt.Printf("source %s (%s) had fetch error, skipping job creation: %v\n", result.Name, result.Type, result.Err)
+		slog.Warn("source had fetch error, skipping job creation", "source", result.Name, "type", result.Type, "error", result.Err)
 		return meta, nil
 	}
 
@@ -145,22 +133,14 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		return meta, fmt.Errorf("sync.image is required for source %s", result.Name)
 	}
 
-	// Build the SOURCE_RESULT env variable payload.
-	payload := sourceResultPayload{
-		Name:             result.Name,
-		Type:             result.Type,
-		SharedVolumePath: result.SharedVolumePath,
-		GitDiff:          result.GitDiff,
-		ConfluenceDiff:   result.ConfluenceDiff,
-	}
-	resultJSON, err := json.Marshal(payload)
-	if err != nil {
-		return meta, fmt.Errorf("marshal source result for %s: %w", result.Name, err)
-	}
-
 	mountPath := result.SharedVolumePath
 	if mountPath == "" {
 		return meta, fmt.Errorf("shared volume path is required for source %s to create kubernetes job", result.Name)
+	}
+
+	volumeName := strings.TrimSpace(result.SharedVolumeName)
+	if volumeName == "" {
+		return meta, fmt.Errorf("shared volume name is required for source %s to create kubernetes job", result.Name)
 	}
 
 	baseJobName := strings.ToLower(strings.TrimSpace(result.Name))
@@ -174,6 +154,7 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	}
 	jobName := fmt.Sprintf("%s-%d", baseJobName, time.Now().Unix())
 	meta.JobName = jobName
+	meta.Namespace = namespace
 
 	job := templateJob.DeepCopy()
 	job.Namespace = namespace
@@ -181,6 +162,32 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	job.ResourceVersion = ""
 	job.UID = ""
 	job.CreationTimestamp = metav1.Time{}
+
+	ctx := context.Background()
+	sharedClaimName := resolveSharedClaimName(job.Spec.Template.Spec.Volumes, volumeName)
+	if sharedClaimName == "" {
+		return meta, fmt.Errorf("job template must include at least one pvc-backed volume for source %s", result.Name)
+	}
+
+	if err := assertVolumePathMapped(job.Spec.Template.Spec.Containers[0].VolumeMounts, volumeName, mountPath); err != nil {
+		return meta, err
+	}
+
+	job.Spec.Template.Spec.Volumes = upsertSharedVolumeClaim(job.Spec.Template.Spec.Volumes, volumeName, sharedClaimName)
+
+	payload := sourceResultPayload{
+		Name:             result.Name,
+		Type:             result.Type,
+		TargetCommit:     meta.TargetCommit,
+		SharedVolumeName: result.SharedVolumeName,
+		SharedVolumePath: result.SharedVolumePath,
+		GitDiff:          result.GitDiff,
+		ConfluenceDiff:   result.ConfluenceDiff,
+	}
+	resultJSON, err := json.Marshal(payload)
+	if err != nil {
+		return meta, fmt.Errorf("marshal source result for %s: %w", result.Name, err)
+	}
 
 	container := &job.Spec.Template.Spec.Containers[0]
 	container.Image = image
@@ -193,13 +200,9 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		Name:  "SOURCE_RESULT",
 		Value: string(resultJSON),
 	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_SHARED_VOLUME_PATH",
-		Value: result.SharedVolumePath,
-	})
 
 	if mountPath != "" {
-		container.VolumeMounts = upsertSharedVolumeMount(container.VolumeMounts, mountPath)
+		container.VolumeMounts = upsertSharedVolumeMount(container.VolumeMounts, volumeName, mountPath)
 	}
 
 	if job.Spec.BackoffLimit == nil {
@@ -211,7 +214,6 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		job.Spec.Template.Spec.RestartPolicy = corev1.RestartPolicyOnFailure
 	}
 
-	ctx := context.Background()
 	created, err := clientSet.BatchV1().Jobs(namespace).Create(ctx, job, metav1.CreateOptions{})
 	if err != nil {
 		if !apierrors.IsAlreadyExists(err) {
@@ -228,10 +230,64 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		}
 	}
 
-	fmt.Printf("kubernetes job created: %s/%s\n", namespace, created.Name)
+	slog.Info("kubernetes job created", "namespace", namespace, "job", created.Name)
 	meta.JobName = created.Name
 	go watchJobCompletion(clientSet, namespace, created.Name)
 	return meta, nil
+}
+
+func cleanupJobResources(ctx context.Context, clientSet *kubernetes.Clientset, meta jobLaunchMetadata) error {
+	namespace := strings.TrimSpace(meta.Namespace)
+	jobName := strings.TrimSpace(meta.JobName)
+
+	deletePolicy := metav1.DeletePropagationForeground
+	if jobName != "" {
+		if err := clientSet.BatchV1().Jobs(namespace).Delete(ctx, jobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil && !apierrors.IsNotFound(err) {
+			return fmt.Errorf("delete kubernetes job %s/%s: %w", namespace, jobName, err)
+		}
+	}
+
+	slog.Info("cleaned up kubernetes resources", "namespace", namespace, "job", jobName)
+	return nil
+}
+
+func resolveSharedClaimName(volumes []corev1.Volume, volumeName string) string {
+	preferred := strings.TrimSpace(volumeName)
+	for _, volume := range volumes {
+		if volume.Name != preferred || volume.PersistentVolumeClaim == nil {
+			continue
+		}
+		if claim := strings.TrimSpace(volume.PersistentVolumeClaim.ClaimName); claim != "" {
+			return claim
+		}
+	}
+
+	for _, volume := range volumes {
+		if volume.PersistentVolumeClaim == nil {
+			continue
+		}
+		if claim := strings.TrimSpace(volume.PersistentVolumeClaim.ClaimName); claim != "" {
+			return claim
+		}
+	}
+
+	return ""
+}
+
+func assertVolumePathMapped(mounts []corev1.VolumeMount, volumeName, mountPath string) error {
+	resolvedVolume := strings.TrimSpace(volumeName)
+	resolvedMount := strings.TrimSpace(mountPath)
+	for _, mount := range mounts {
+		if mount.Name == resolvedVolume && strings.TrimSpace(mount.MountPath) == resolvedMount {
+			return nil
+		}
+	}
+	for _, mount := range mounts {
+		if strings.TrimSpace(mount.MountPath) == resolvedMount {
+			return nil
+		}
+	}
+	return fmt.Errorf("job template must include mountPath %q for source shared volume", resolvedMount)
 }
 
 func upsertEnv(envs []corev1.EnvVar, env corev1.EnvVar) []corev1.EnvVar {
@@ -244,20 +300,44 @@ func upsertEnv(envs []corev1.EnvVar, env corev1.EnvVar) []corev1.EnvVar {
 	return append(envs, env)
 }
 
-func upsertSharedVolumeMount(mounts []corev1.VolumeMount, mountPath string) []corev1.VolumeMount {
-	sharedVolumeName := os.Getenv("SHARED_VOLUME_NAME")
-	if sharedVolumeName == "" {
-		sharedVolumeName = "hawk-shared-volume"
-	}
+func upsertSharedVolumeMount(mounts []corev1.VolumeMount, volumeName, mountPath string) []corev1.VolumeMount {
+	resolvedVolumeName := strings.TrimSpace(volumeName)
+	resolvedMountPath := strings.TrimSpace(mountPath)
+
 	for i := range mounts {
-		if mounts[i].Name == sharedVolumeName {
-			mounts[i].MountPath = mountPath
+		if mounts[i].Name == resolvedVolumeName {
+			mounts[i].MountPath = resolvedMountPath
 			return mounts
 		}
 	}
+
+	for i := range mounts {
+		if mounts[i].MountPath == resolvedMountPath {
+			mounts[i].Name = resolvedVolumeName
+			return mounts
+		}
+	}
+
 	return append(mounts, corev1.VolumeMount{
-		Name:      sharedVolumeName,
-		MountPath: mountPath,
+		Name:      resolvedVolumeName,
+		MountPath: resolvedMountPath,
+	})
+}
+
+func upsertSharedVolumeClaim(volumes []corev1.Volume, volumeName, claimName string) []corev1.Volume {
+	for i := range volumes {
+		if volumes[i].Name != volumeName {
+			continue
+		}
+		volumes[i].PersistentVolumeClaim = &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName}
+		return volumes
+	}
+
+	return append(volumes, corev1.Volume{
+		Name: volumeName,
+		VolumeSource: corev1.VolumeSource{
+			PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: claimName},
+		},
 	})
 }
 
@@ -270,7 +350,7 @@ func watchJobCompletion(clientSet *kubernetes.Clientset, namespace, jobName stri
 		FieldSelector: "metadata.name=" + jobName,
 	})
 	if err != nil {
-		fmt.Printf("failed to watch job %s/%s: %v\n", namespace, jobName, err)
+		slog.Error("failed to watch kubernetes job", "namespace", namespace, "job", jobName, "error", err)
 		return
 	}
 	defer watcher.Stop()
@@ -282,11 +362,11 @@ func watchJobCompletion(clientSet *kubernetes.Clientset, namespace, jobName stri
 		}
 		for _, cond := range job.Status.Conditions {
 			if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-				fmt.Printf("job %s/%s completed successfully\n", namespace, jobName)
+				slog.Info("kubernetes job completed", "namespace", namespace, "job", jobName)
 				return
 			}
 			if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-				fmt.Printf("job %s/%s failed: %s\n", namespace, jobName, cond.Message)
+				slog.Error("kubernetes job failed", "namespace", namespace, "job", jobName, "message", cond.Message)
 				return
 			}
 		}

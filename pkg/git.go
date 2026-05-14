@@ -2,8 +2,10 @@ package pkg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path"
 	"sort"
@@ -14,6 +16,7 @@ import (
 	"github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/go-git/go-git/v5/plumbing/storer"
 	"github.com/go-git/go-git/v5/plumbing/transport"
 	githttp "github.com/go-git/go-git/v5/plumbing/transport/http"
 	"github.com/go-git/go-git/v5/storage/memory"
@@ -61,6 +64,10 @@ type gitDiffResult struct {
 	ExportedNewFiles []string `json:"exportedNewFiles,omitempty"`
 }
 
+var errGitSyncNoOp = errors.New("git sync no-op")
+
+const gitExportCommitRetention = 5
+
 func newGitSource(cfg GitCfg, sourceName string, sharedVolumePath string, apiServerEndpoint string) Source {
 	return gitSource{
 		cfg:               cfg,
@@ -93,6 +100,14 @@ func (g gitSource) Validate() error {
 func (g gitSource) Fetch() (SourceResult, error) {
 	gitResult, err := gitSync(g.cfg, g.sourceName, g.sharedVolumePath, g.apiServerEndpoint)
 	if err != nil {
+		if errors.Is(err, errGitSyncNoOp) {
+			return SourceResult{
+				Name:    g.sourceName,
+				Type:    "git",
+				GitDiff: &gitResult,
+				NoOp:    true,
+			}, nil
+		}
 		return SourceResult{Name: g.sourceName, Type: "git"}, err
 	}
 
@@ -116,6 +131,25 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 	latestCommitData, err := gitGetLatestCommit(source)
 	if err != nil {
 		return gitDiffResult{}, fmt.Errorf("failed to get latest commit: %w", err)
+	}
+
+	// Check if commitID from apiserver and targetCommit from git are the same
+	// If they match, abort flow and wait for next sync cycle as per cron
+	latestSnapshot, err := decodeGitCommitSnapshot(latestCommitData)
+	if err != nil {
+		return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot: %w", err)
+	}
+
+	if lastCommitSHA == latestSnapshot.CommitSHA {
+		slog.Info("commit unchanged, waiting for next sync cycle", "source", sourceName, "commit", lastCommitSHA)
+		if cleanupErr := cleanupOldCommitExports(source, sourceName, sharedVolumePath, gitExportCommitRetention); cleanupErr != nil {
+			slog.Warn("failed to cleanup git exports", "source", sourceName, "error", cleanupErr)
+		}
+		return gitDiffResult{
+			Name:         sourceName,
+			BaseCommit:   lastCommitSHA,
+			TargetCommit: latestSnapshot.CommitSHA,
+		}, errGitSyncNoOp
 	}
 
 	lastCommitData, err := gitGetLastCommit(source, lastCommitSHA)
@@ -151,12 +185,7 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 	diffResult.Name = strings.TrimSpace(sourceName)
 
 	if len(diffResult.ChangedFiles) == 0 {
-		return diffResult, nil
-	}
-
-	latestSnapshot, err := decodeGitCommitSnapshot(latestCommitData)
-	if err != nil {
-		return gitDiffResult{}, fmt.Errorf("failed to decode latest snapshot: %w", err)
+		return diffResult, errGitSyncNoOp
 	}
 
 	lastSnapshot, err := decodeGitCommitSnapshot(lastCommitData)
@@ -181,7 +210,11 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 	diffResult.ExportedFiles = append(append([]string{}, exportedOldFiles...), exportedNewFiles...)
 	sort.Strings(diffResult.ExportedFiles)
 
-	fmt.Printf("This is diffresult structure: %+v\n\n", diffResult)
+	if cleanupErr := cleanupOldCommitExports(source, sourceName, sharedVolumePath, gitExportCommitRetention); cleanupErr != nil {
+		slog.Warn("failed to cleanup git exports", "source", sourceName, "error", cleanupErr)
+	}
+
+	slog.Info("git diff computed", "source", sourceName, "baseCommit", diffResult.BaseCommit, "targetCommit", diffResult.TargetCommit, "changedCount", len(diffResult.ChangedFiles), "deletedCount", len(diffResult.DeletedFiles), "exportedCount", len(diffResult.ExportedFiles))
 	return diffResult, nil
 
 }
@@ -731,4 +764,103 @@ func splitByMatchedDir(filePath string, dirs []string) (string, string) {
 	}
 
 	return bestMatch, relativePath
+}
+
+func cleanupOldCommitExports(source GitCfg, sourceName string, sharedVolumePath string, keepRecent int) error {
+	if keepRecent <= 0 {
+		return nil
+	}
+
+	resolvedSharedPath := strings.TrimSpace(os.ExpandEnv(sharedVolumePath))
+	resolvedSourceName := strings.TrimSpace(sourceName)
+	if resolvedSharedPath == "" || resolvedSourceName == "" {
+		return nil
+	}
+
+	exportRoot := path.Join(resolvedSharedPath, resolvedSourceName)
+	entries, err := os.ReadDir(exportRoot)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil
+		}
+		return fmt.Errorf("read export root %s: %w", exportRoot, err)
+	}
+
+	commitDirs := make(map[string]string)
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+
+		commitSHA := strings.TrimSpace(entry.Name())
+		hash := plumbing.NewHash(commitSHA)
+		if hash.IsZero() {
+			continue
+		}
+
+		commitDirs[commitSHA] = path.Join(exportRoot, entry.Name())
+	}
+
+	if len(commitDirs) <= keepRecent {
+		return nil
+	}
+
+	auth, err := resolveGitAuth(source)
+	if err != nil {
+		return err
+	}
+
+	repo, err := git.Clone(memory.NewStorage(), memfs.New(), &git.CloneOptions{
+		URL:           source.URL,
+		ReferenceName: plumbing.NewBranchReferenceName(source.Branch),
+		SingleBranch:  true,
+		Auth:          auth,
+	})
+	if err != nil {
+		return fmt.Errorf("clone repo %s for cleanup: %w", source.URL, err)
+	}
+
+	ref, err := repo.Reference(plumbing.NewBranchReferenceName(source.Branch), true)
+	if err != nil {
+		ref, err = repo.Head()
+		if err != nil {
+			return fmt.Errorf("resolve branch ref for cleanup: %w", err)
+		}
+	}
+
+	commitIter, err := repo.Log(&git.LogOptions{From: ref.Hash()})
+	if err != nil {
+		return fmt.Errorf("build commit log for cleanup: %w", err)
+	}
+
+	commitAge := make(map[string]int, len(commitDirs))
+	index := 0
+	err = commitIter.ForEach(func(commit *object.Commit) error {
+		commitSHA := commit.Hash.String()
+		if _, ok := commitDirs[commitSHA]; ok {
+			commitAge[commitSHA] = index
+			if len(commitAge) == len(commitDirs) {
+				return storer.ErrStop
+			}
+		}
+
+		index++
+		return nil
+	})
+	if err != nil && !errors.Is(err, storer.ErrStop) {
+		return fmt.Errorf("iterate commit log for cleanup: %w", err)
+	}
+
+	for commitSHA, age := range commitAge {
+		if age < keepRecent {
+			continue
+		}
+
+		commitPath := commitDirs[commitSHA]
+		if removeErr := os.RemoveAll(commitPath); removeErr != nil {
+			return fmt.Errorf("remove old export path %s: %w", commitPath, removeErr)
+		}
+	}
+
+	return nil
 }

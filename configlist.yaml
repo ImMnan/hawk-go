@@ -9,13 +9,14 @@
     #sharedVolume:
     #  path: $HOME/Desktop/     
     schedule: "* * * * *"
-    template: templates/job-git.yaml
+    job-template: templates/job-git.yaml
     productName: perfecto
     sources: 
     - type: git
       name: basic-git
       sharedVolume:
-        path: $HOME/Desktop/ 
+        name: hawk-volume
+        path: /opt/hawk-data/ 
       git:
         url: "https://github.com/ImMnan/doc-test.git"
         branch: main
@@ -24,7 +25,7 @@
         credentials: 
           type: secret
           name: git-secret-token
-          path: $HOME
+          path: /etc/hawk/secrets/
     apiServer:
       type: hawk-api-server
       name: hawk-api-service
@@ -36,7 +37,7 @@
       credentials:
         type: secret
         name: name-secret-token
-        path: $HOME
+        path: /etc/hawk/secrets/
   
   
 #- name: blazemeter-doc
