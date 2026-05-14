@@ -10,6 +10,9 @@ import (
 func InitLogger() {
 	level := parseLogLevel(os.Getenv("HAWK_LOG_LEVEL"))
 	format := strings.ToLower(strings.TrimSpace(os.Getenv("HAWK_LOG_FORMAT")))
+	if format == "" {
+		format = "json"
+	}
 
 	opts := &slog.HandlerOptions{
 		Level: level,
@@ -30,9 +33,11 @@ func InitLogger() {
 	var handler slog.Handler
 	if format == "json" {
 		handler = slog.NewJSONHandler(os.Stdout, opts)
-	} else {
-		format = "text"
+	} else if format == "text" {
 		handler = slog.NewTextHandler(os.Stdout, opts)
+	} else {
+		format = "json"
+		handler = slog.NewJSONHandler(os.Stdout, opts)
 	}
 
 	logger := slog.New(handler).With("service", "hawk")
