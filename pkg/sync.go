@@ -17,6 +17,7 @@ type Source interface {
 type SourceResult struct {
 	Name             string
 	Type             string
+	SharedVolumeName string
 	SharedVolumePath string
 	GitDiff          *gitDiffResult
 	ConfluenceDiff   *confluenceDiffResult
@@ -103,9 +104,14 @@ func sync(c Config) error {
 			return nil
 		}
 
-		templateJob, err := loadJobTemplate(syncCfg.Template)
+		templateJob, err := loadJobTemplate(syncCfg.JobTemplate)
 		if err != nil {
 			return fmt.Errorf("failed to load job template: %w", err)
+		}
+
+		templatePVC, err := loadPVCTemplate(syncCfg.PVCTemplate)
+		if err != nil {
+			return fmt.Errorf("failed to load pvc template: %w", err)
 		}
 
 		switch syncCfg.Mode {
@@ -142,6 +148,7 @@ func sync(c Config) error {
 					}
 
 					result, err := handler.Fetch()
+					result.SharedVolumeName = src.SharedVolume.Name
 					result.SharedVolumePath = src.SharedVolume.Path
 					if err != nil {
 						result.Err = fmt.Errorf("source fetch failed: %w", err)
@@ -173,7 +180,7 @@ func sync(c Config) error {
 					continue
 				}
 
-				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
+				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, templatePVC, clientSet)
 				if err != nil {
 					fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
 					if firstErr == nil {
@@ -183,15 +190,11 @@ func sync(c Config) error {
 				}
 
 				launches = append(launches, launchMeta)
-				fmt.Printf("launch metadata source=%s job=%s outputFile=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.OutputFilePath)
+				fmt.Printf("launch metadata source=%s job=%s targetCommit=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.TargetCommit)
 			}
 
 			if len(launches) > 0 {
-				if err := waitForOutputFiles(launches); err != nil {
-					return err
-				}
-
-				if err := postOutputFiles(launches, resolveAPIServerEndpoint(syncCfg)); err != nil {
+				if err := waitForCommitUpdates(launches, resolveAPIServerEndpoint(syncCfg), clientSet); err != nil {
 					return err
 				}
 			}

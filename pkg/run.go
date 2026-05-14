@@ -20,14 +20,15 @@ type Config struct {
 }
 
 type SyncConfig struct {
-	Enabled    bool
-	Mode       string
-	AgentType  string `yaml:"agentType"`
-	Image      string `yaml:"image"`
-	Template   string `yaml:"template"`
-	Schedule   string
-	Sources    []sourceConfig
-	APIServers apiServerCfg `yaml:"apiServer"`
+	Enabled     bool
+	Mode        string
+	AgentType   string `yaml:"agentType"`
+	Image       string `yaml:"image"`
+	JobTemplate string `yaml:"job-template"`
+	PVCTemplate string `yaml:"pvc-template"`
+	Schedule    string
+	Sources     []sourceConfig
+	APIServers  apiServerCfg `yaml:"apiServer"`
 }
 
 type credentialsConfig struct {
@@ -37,6 +38,7 @@ type credentialsConfig struct {
 }
 
 type sharedVolumeConfig struct {
+	Name string `yaml:"name"`
 	Path string
 }
 
