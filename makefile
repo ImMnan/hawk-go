@@ -1,5 +1,5 @@
 APP_NAME := hawk-go
-VERSION := 0.4.2
+VERSION := 0.4.3
 REGISTRY := immnan
 IMAGE := $(REGISTRY)/hawk
 
