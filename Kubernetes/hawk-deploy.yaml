@@ -41,12 +41,14 @@ data:
         mode: local-agent
         image: immnan/hawk-llm:0.1.1
         schedule: "* * * * *"
-        template: /etc/hawk/template/job-git.yaml
+        job-template: /etc/hawk/template/job-git.yaml
+        pvc-template: /etc/hawk/template/pvc-git.yaml
         sources:
           - type: git
             name: basic-git
             sharedVolume:
-              path: /opt/hawk-data
+              name: hawk-volume
+              path: /opt/hawk-data/
             git:
               url: "https://github.com/ImMnan/doc-test.git"
               branch: main
@@ -99,17 +101,30 @@ data:
                 - name: SOURCE_SHARED_VOLUME_PATH
                   value: "/opt/hawk-data/"
               volumeMounts:
-                - name: hawk-shared-volume
+                - name: hawk-volume
                   mountPath: /opt/hawk-data/
           volumes:
-            - name: hawk-shared-volume
+            - name: hawk-volume
               persistentVolumeClaim:
-                claimName: hawk-shared-pvc
+                claimName: hawk-llm-pvc
+  pvc-git.yaml: |
+    apiVersion: v1
+    kind: PersistentVolumeClaim
+    metadata:
+      name: hawk-llm-pvc
+      namespace: hawk
+    spec:
+      storageClassName: standard
+      accessModes:
+      - ReadWriteOnce
+      resources:
+        requests:
+          storage: 1Gi
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
-  name: hawk-shared-pvc
+  name: hawk-pvc
   namespace: hawk
 spec:
   storageClassName: standard
@@ -118,6 +133,7 @@ spec:
   resources:
     requests:
       storage: 2Gi
+
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -152,8 +168,6 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
-          - name: SHARED_VOLUME_NAME
-            value: hawk-shared-volume 
         resources:
           requests:
             memory: "256Mi"
@@ -169,7 +183,7 @@ spec:
           - name: job-template
             mountPath: /etc/hawk/template/
             readOnly: true
-          - name: hawk-shared-volume
+          - name: hawk-volume
             mountPath: /opt/hawk-data/
           - name: git-token-secret
             mountPath: /etc/hawk/secrets/git-secret-token
@@ -181,10 +195,10 @@ spec:
             name: hawk-config
         - name: job-template
           configMap: 
-            name: job-template
-        - name: hawk-shared-volume
+            name: job-template          
+        - name: hawk-volume
           persistentVolumeClaim:
-            claimName: hawk-shared-pvc
+            claimName: hawk-pvc
         - name: git-token-secret
           secret:
             secretName: git-secret-token
