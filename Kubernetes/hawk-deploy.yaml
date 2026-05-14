@@ -114,7 +114,7 @@ metadata:
   name: hawk-shared-pvc
   namespace: hawk
 spec:
-  storageClassName: filestore-rwx
+  storageClassName: standard-rwx
   accessModes:
   - ReadWriteMany
   resources:
@@ -145,7 +145,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: immnan/hawk:0.3.0
+        image: immnan/hawk:0.4.0
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
