@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/robfig/cron/v3"
+	"k8s.io/client-go/kubernetes"
 )
 
 type Source interface {
@@ -70,6 +71,120 @@ func loadLatestConfig(base Config) (Config, error) {
 	return Config{}, fmt.Errorf("config not found in latest configlist (name=%s)", baseName)
 }
 
+func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
+	latestCfg, err := loadLatestConfig(c)
+	if err != nil {
+		return fmt.Errorf("failed to refresh configlist for %s: %w", c.Name, err)
+	}
+
+	c = latestCfg
+	syncCfg := c.Sync
+
+	if !syncCfg.Enabled {
+		fmt.Printf("sync disabled for %s in latest config, stopping worker\n", c.Name)
+		return fmt.Errorf("sync disabled in config")
+	}
+
+	templateJob, err := loadJobTemplate(syncCfg.JobTemplate)
+	if err != nil {
+		return fmt.Errorf("failed to load job template: %w", err)
+	}
+
+	switch syncCfg.Mode {
+	case "local-agent":
+		fmt.Printf("syncing %s using local agent\n", c.Name)
+
+		results := make(chan SourceResult, len(syncCfg.Sources))
+		var wg stdsync.WaitGroup
+
+		for _, source := range syncCfg.Sources {
+			src := source
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				fmt.Printf("processing source %s (%s)\n", src.Name, src.Type)
+
+				handler, err := newSource(src, syncCfg)
+				if err != nil {
+					results <- SourceResult{
+						Name: src.Name,
+						Type: src.Type,
+						Err:  fmt.Errorf("source init failed: %w", err),
+					}
+					return
+				}
+
+				if err := handler.Validate(); err != nil {
+					results <- SourceResult{
+						Name: src.Name,
+						Type: src.Type,
+						Err:  fmt.Errorf("source config invalid: %w", err),
+					}
+					return
+				}
+
+				result, err := handler.Fetch()
+				result.SharedVolumeName = src.SharedVolume.Name
+				result.SharedVolumePath = src.SharedVolume.Path
+				if err != nil {
+					result.Err = fmt.Errorf("source fetch failed: %w", err)
+					if result.Name == "" {
+						result.Name = src.Name
+					}
+					if result.Type == "" {
+						result.Type = src.Type
+					}
+					results <- result
+					return
+				}
+
+				results <- result
+			}()
+		}
+
+		wg.Wait()
+		close(results)
+
+		var firstErr error
+		launches := make([]jobLaunchMetadata, 0, len(syncCfg.Sources))
+		for result := range results {
+			if result.Err != nil {
+				fmt.Printf("source %s (%s) failed: %v\n", result.Name, result.Type, result.Err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, result.Err)
+				}
+				continue
+			}
+
+			launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
+			if err != nil {
+				fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
+				if firstErr == nil {
+					firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
+				}
+				continue
+			}
+
+			launches = append(launches, launchMeta)
+			fmt.Printf("launch metadata source=%s job=%s targetCommit=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.TargetCommit)
+		}
+
+		if len(launches) > 0 {
+			if err := waitForCommitUpdates(launches, resolveAPIServerEndpoint(syncCfg), clientSet); err != nil {
+				return err
+			}
+		}
+
+		if firstErr != nil {
+			return firstErr
+		}
+	default:
+		return fmt.Errorf("unsupported sync mode: %s", syncCfg.Mode)
+	}
+
+	return nil
+}
+
 func sync(c Config) error {
 	if !c.Sync.Enabled {
 		fmt.Printf("sync disabled for %s\n", c.Name)
@@ -87,118 +202,26 @@ func sync(c Config) error {
 	}
 	defer stop()
 
-	fmt.Printf("syncing %s\n of type %s as per cron %v", c.Name, c.Type, c.Sync.Schedule)
+	fmt.Printf("syncing %s of type %s as per cron %v\n", c.Name, c.Type, c.Sync.Schedule)
+
+	// Execute the first sync cycle immediately on startup
+	fmt.Printf("executing initial sync cycle for %s\n", c.Name)
+	if err := performSyncCycle(c, clientSet); err != nil {
+		fmt.Printf("initial sync cycle for %s failed: %v\n", c.Name, err)
+		// Continue to next trigger instead of returning
+	}
+
+	// Enter the loop for subsequent sync cycles triggered by cron
 	for triggeredAt := range trigger {
 		fmt.Printf("sync trigger fired for %s at %s\n", c.Name, triggeredAt.Format(time.RFC3339))
 
-		latestCfg, err := loadLatestConfig(c)
-		if err != nil {
-			return fmt.Errorf("failed to refresh configlist for %s: %w", c.Name, err)
-		}
-
-		c = latestCfg
-		syncCfg := c.Sync
-
-		if !syncCfg.Enabled {
-			fmt.Printf("sync disabled for %s in latest config, stopping worker\n", c.Name)
-			return nil
-		}
-
-		templateJob, err := loadJobTemplate(syncCfg.JobTemplate)
-		if err != nil {
-			return fmt.Errorf("failed to load job template: %w", err)
-		}
-
-		switch syncCfg.Mode {
-		case "local-agent":
-			fmt.Printf("syncing %s using local agent\n", c.Name)
-
-			results := make(chan SourceResult, len(syncCfg.Sources))
-			var wg stdsync.WaitGroup
-
-			for _, source := range syncCfg.Sources {
-				src := source
-				wg.Add(1)
-				go func() {
-					defer wg.Done()
-					fmt.Printf("processing source %s (%s)\n", src.Name, src.Type)
-
-					handler, err := newSource(src, syncCfg)
-					if err != nil {
-						results <- SourceResult{
-							Name: src.Name,
-							Type: src.Type,
-							Err:  fmt.Errorf("source init failed: %w", err),
-						}
-						return
-					}
-
-					if err := handler.Validate(); err != nil {
-						results <- SourceResult{
-							Name: src.Name,
-							Type: src.Type,
-							Err:  fmt.Errorf("source config invalid: %w", err),
-						}
-						return
-					}
-
-					result, err := handler.Fetch()
-					result.SharedVolumeName = src.SharedVolume.Name
-					result.SharedVolumePath = src.SharedVolume.Path
-					if err != nil {
-						result.Err = fmt.Errorf("source fetch failed: %w", err)
-						if result.Name == "" {
-							result.Name = src.Name
-						}
-						if result.Type == "" {
-							result.Type = src.Type
-						}
-						results <- result
-						return
-					}
-
-					results <- result
-				}()
+		if err := performSyncCycle(c, clientSet); err != nil {
+			// Check if sync was disabled in the config
+			if strings.Contains(err.Error(), "sync disabled") {
+				return nil
 			}
-
-			wg.Wait()
-			close(results)
-
-			var firstErr error
-			launches := make([]jobLaunchMetadata, 0, len(syncCfg.Sources))
-			for result := range results {
-				if result.Err != nil {
-					fmt.Printf("source %s (%s) failed: %v\n", result.Name, result.Type, result.Err)
-					if firstErr == nil {
-						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, result.Err)
-					}
-					continue
-				}
-
-				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
-				if err != nil {
-					fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
-					if firstErr == nil {
-						firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
-					}
-					continue
-				}
-
-				launches = append(launches, launchMeta)
-				fmt.Printf("launch metadata source=%s job=%s targetCommit=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.TargetCommit)
-			}
-
-			if len(launches) > 0 {
-				if err := waitForCommitUpdates(launches, resolveAPIServerEndpoint(syncCfg), clientSet); err != nil {
-					return err
-				}
-			}
-
-			if firstErr != nil {
-				return firstErr
-			}
-		default:
-			return fmt.Errorf("unsupported sync mode: %s", syncCfg.Mode)
+			fmt.Printf("sync cycle for %s failed: %v\n", c.Name, err)
+			// Continue to next trigger instead of returning
 		}
 	}
 
