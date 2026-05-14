@@ -1,7 +1,6 @@
 package pkg
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -69,39 +68,4 @@ func getLastCommitId(sourceName, apiServerEndpoint string) (string, error) {
 
 	fmt.Printf("Last commit id for %v is %v\n", sourceName, commitId)
 	return commitId, nil
-}
-
-func postResultToHawkAPI(requestBodyData []byte, apiServerEndpoint string) error {
-	// This file will be placed in the shared volume - sharedVolume/source.name/commitId/output.json
-	// Use output.json as a post request payload to the below hawk API request.
-
-	if len(bytes.TrimSpace(requestBodyData)) == 0 {
-		return fmt.Errorf("post payload is empty")
-	}
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequest("POST", fmt.Sprintf("http://%s/api/document/create", apiServerEndpoint), bytes.NewBuffer(requestBodyData))
-	if err != nil {
-		return fmt.Errorf("build post document request: %w", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	fmt.Printf("[DEBUG] hitting API endpoint: %v\n", req)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request post document endpoint=%s: %w", apiServerEndpoint, err)
-	}
-	defer resp.Body.Close()
-
-	bodyText, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("read post document response body: %w", err)
-	}
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("post document failed status=%d body=%s", resp.StatusCode, strings.TrimSpace(string(bodyText)))
-	}
-
-	fmt.Printf("%s\n", bodyText)
-	return nil
 }
