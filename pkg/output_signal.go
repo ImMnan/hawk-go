@@ -35,10 +35,11 @@ func waitForCommitUpdates(launches []jobLaunchMetadata, apiServerEndpoint string
 			var lastPollErr error
 			for {
 				currentCommit, err := getLastCommitId(meta.SourceName, apiServerEndpoint)
+				fmt.Println("[DEBUG] Still waiting for the commit to change...")
 				if err != nil {
 					lastPollErr = err
 				} else if strings.TrimSpace(currentCommit) == strings.TrimSpace(meta.TargetCommit) {
-					fmt.Printf("commit update observed for source=%s job=%s commit=%s\n", meta.SourceName, meta.JobName, meta.TargetCommit)
+					fmt.Printf("[SUCCESS] commit update observed for source=%s job=%s commit=%s\n", meta.SourceName, meta.JobName, meta.TargetCommit)
 					if err := cleanupJobResources(context.Background(), clientSet, meta); err != nil {
 						errCh <- err
 					}
