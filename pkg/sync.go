@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"log/slog"
 	"strings"
 	stdsync "sync"
 	"time"
@@ -82,7 +83,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 	syncCfg := c.Sync
 
 	if !syncCfg.Enabled {
-		fmt.Printf("sync disabled for %s in latest config, stopping worker\n", c.Name)
+		slog.Info("sync disabled in latest config, stopping worker", "config", c.Name)
 		return fmt.Errorf("sync disabled in config")
 	}
 
@@ -93,7 +94,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 
 	switch syncCfg.Mode {
 	case "local-agent":
-		fmt.Printf("syncing %s using local agent\n", c.Name)
+		slog.Info("syncing config using local agent", "config", c.Name)
 
 		results := make(chan SourceResult, len(syncCfg.Sources))
 		var wg stdsync.WaitGroup
@@ -103,7 +104,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 			wg.Add(1)
 			go func() {
 				defer wg.Done()
-				fmt.Printf("processing source %s (%s)\n", src.Name, src.Type)
+				slog.Debug("processing source", "source", src.Name, "type", src.Type)
 
 				handler, err := newSource(src, syncCfg)
 				if err != nil {
@@ -150,7 +151,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 		launches := make([]jobLaunchMetadata, 0, len(syncCfg.Sources))
 		for result := range results {
 			if result.Err != nil {
-				fmt.Printf("source %s (%s) failed: %v\n", result.Name, result.Type, result.Err)
+				slog.Error("source failed", "source", result.Name, "type", result.Type, "error", result.Err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, result.Err)
 				}
@@ -158,13 +159,13 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 			}
 
 			if result.NoOp {
-				fmt.Printf("source %s (%s) produced no work, skipping kubernetes job creation\n", result.Name, result.Type)
+				slog.Info("source produced no work, skipping kubernetes job creation", "source", result.Name, "type", result.Type)
 				continue
 			}
 
 			launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
 			if err != nil {
-				fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
+				slog.Error("failed to create kubernetes job", "source", result.Name, "type", result.Type, "error", err)
 				if firstErr == nil {
 					firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, err)
 				}
@@ -172,7 +173,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 			}
 
 			launches = append(launches, launchMeta)
-			fmt.Printf("launch metadata source=%s job=%s targetCommit=%s\n", launchMeta.SourceName, launchMeta.JobName, launchMeta.TargetCommit)
+			slog.Info("launch metadata", "source", launchMeta.SourceName, "job", launchMeta.JobName, "targetCommit", launchMeta.TargetCommit)
 		}
 
 		if len(launches) > 0 {
@@ -193,7 +194,7 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 
 func sync(c Config) error {
 	if !c.Sync.Enabled {
-		fmt.Printf("sync disabled for %s\n", c.Name)
+		slog.Info("sync disabled", "config", c.Name)
 		return nil
 	}
 
@@ -208,27 +209,30 @@ func sync(c Config) error {
 	}
 	defer stop()
 
-	fmt.Printf("syncing %s of type %s as per cron %v\n", c.Name, c.Type, c.Sync.Schedule)
+	slog.Info("sync scheduler started", "config", c.Name, "type", c.Type, "schedule", c.Sync.Schedule)
 
 	// Execute the first sync cycle immediately on startup
-	fmt.Printf("executing initial sync cycle for %s\n", c.Name)
+	slog.Info("executing initial sync cycle", "config", c.Name)
 	if err := performSyncCycle(c, clientSet); err != nil {
-		fmt.Printf("initial sync cycle for %s failed: %v\n", c.Name, err)
+		slog.Error("initial sync cycle failed", "config", c.Name, "error", err)
 		// Continue to next trigger instead of returning
 	}
+	logNextSyncCycle(c.Name, c.Sync.Schedule, time.Now())
 
 	// Enter the loop for subsequent sync cycles triggered by cron
 	for triggeredAt := range trigger {
-		fmt.Printf("sync trigger fired for %s at %s\n", c.Name, triggeredAt.Format(time.RFC3339))
+		slog.Info("sync trigger fired", "config", c.Name, "time", triggeredAt.Format(time.RFC3339))
 
 		if err := performSyncCycle(c, clientSet); err != nil {
 			// Check if sync was disabled in the config
 			if strings.Contains(err.Error(), "sync disabled") {
 				return nil
 			}
-			fmt.Printf("sync cycle for %s failed: %v\n", c.Name, err)
+			slog.Error("sync cycle failed", "config", c.Name, "error", err)
 			// Continue to next trigger instead of returning
 		}
+
+		logNextSyncCycle(c.Name, c.Sync.Schedule, time.Now())
 	}
 
 	return fmt.Errorf("sync trigger stopped for %s", c.Name)
@@ -247,7 +251,7 @@ func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 		select {
 		case trigger <- time.Now():
 		default:
-			fmt.Printf("warning: sync trigger blocked for %s\n", c.Name)
+			slog.Warn("sync trigger blocked", "config", c.Name)
 		}
 	})
 	if err != nil {
@@ -255,7 +259,7 @@ func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	}
 
 	cronSched.Start()
-	fmt.Printf("cron scheduler started for %s with schedule: %s\n", c.Name, c.Sync.Schedule)
+	slog.Info("cron scheduler started", "config", c.Name, "schedule", c.Sync.Schedule)
 
 	stop := func() {
 		<-cronSched.Stop().Done()
@@ -263,4 +267,20 @@ func syncTrigger(c Config) (<-chan time.Time, func(), error) {
 	}
 
 	return trigger, stop, nil
+}
+
+func logNextSyncCycle(configName string, schedule string, reference time.Time) {
+	parsedSchedule, err := cron.ParseStandard(schedule)
+	if err != nil {
+		slog.Warn("failed to compute next sync cycle", "config", configName, "schedule", schedule, "error", err)
+		return
+	}
+
+	nextRun := parsedSchedule.Next(reference)
+	if nextRun.IsZero() {
+		slog.Warn("next sync cycle could not be determined", "config", configName, "schedule", schedule)
+		return
+	}
+
+	slog.Info("next sync cycle scheduled", "config", configName, "schedule", schedule, "nextRun", nextRun.Format(time.RFC3339))
 }

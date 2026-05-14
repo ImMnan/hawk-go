@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	stdsync "sync"
@@ -76,14 +77,14 @@ type apiServerCfg struct {
 
 func Run() {
 
-	fmt.Println("Running the hawk...")
+	slog.Info("running hawk")
 	// This is supposed to run 2 functions, one for the init and other for the main loop.
 
-	fmt.Println("Initializing hawk configuraions...")
+	slog.Info("initializing hawk configurations")
 
 	confList, err := init_hawk()
 	if err != nil {
-		fmt.Printf("error encountered: %v\n", err)
+		slog.Error("failed to initialize hawk", "error", err)
 		panic(err)
 	}
 
@@ -91,12 +92,12 @@ func Run() {
 	// Iterate over conflist struct and proceed in the for loop.
 	var workers stdsync.WaitGroup
 	for _, c := range confList {
-		fmt.Printf("[DEBUG] Processing config: %s\n", c.Name)
+		slog.Debug("processing config", "config", c.Name)
 		workers.Add(1)
 		go func(cfg Config) {
 			defer workers.Done()
 			if err := sync(cfg); err != nil {
-				fmt.Printf("sync worker for %s stopped: %v\n", cfg.Name, err)
+				slog.Error("sync worker stopped", "config", cfg.Name, "error", err)
 			}
 		}(c)
 	}
@@ -125,7 +126,7 @@ func init_hawk() (ConfList, error) {
 		return nil, fmt.Errorf("unable to parse config YAML: %w", err)
 	}
 
-	fmt.Println("Config loaded, returning success")
+	slog.Info("config loaded")
 
 	return confList, nil
 

@@ -1,14 +1,14 @@
 package main
 
 import (
-	"fmt"
+	"log/slog"
 
 	"github.com/immnan/hawk/pkg"
 )
 
 func main() {
-
-	fmt.Println("Initializing the hawk...")
+	pkg.InitLogger()
+	slog.Info("initializing hawk")
 	pkg.Run()
 
 }

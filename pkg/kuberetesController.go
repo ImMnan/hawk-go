@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 	"time"
@@ -57,13 +58,13 @@ func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncC
 	*/
 	clientSet, err := kubernetesInit()
 	if err != nil {
-		fmt.Printf("failed to initialize kubernetes client: %v\n", err)
+		slog.Error("failed to initialize kubernetes client", "error", err)
 		return
 	}
 
 	for result := range resultQueue {
 		if _, err := createKubernetesJob(result, syncCfg, templateJob, clientSet); err != nil {
-			fmt.Printf("failed to create kubernetes job for source %s: %v\n", result.Name, err)
+			slog.Error("failed to create kubernetes job", "source", result.Name, "error", err)
 		}
 	}
 }
@@ -118,7 +119,7 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	}
 
 	if result.Err != nil {
-		fmt.Printf("source %s (%s) had fetch error, skipping job creation: %v\n", result.Name, result.Type, result.Err)
+		slog.Warn("source had fetch error, skipping job creation", "source", result.Name, "type", result.Type, "error", result.Err)
 		return meta, nil
 	}
 
@@ -229,7 +230,7 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		}
 	}
 
-	fmt.Printf("kubernetes job created: %s/%s\n", namespace, created.Name)
+	slog.Info("kubernetes job created", "namespace", namespace, "job", created.Name)
 	meta.JobName = created.Name
 	go watchJobCompletion(clientSet, namespace, created.Name)
 	return meta, nil
@@ -246,7 +247,7 @@ func cleanupJobResources(ctx context.Context, clientSet *kubernetes.Clientset, m
 		}
 	}
 
-	fmt.Printf("cleaned up kubernetes resources namespace=%s job=%s\n", namespace, jobName)
+	slog.Info("cleaned up kubernetes resources", "namespace", namespace, "job", jobName)
 	return nil
 }
 
@@ -349,7 +350,7 @@ func watchJobCompletion(clientSet *kubernetes.Clientset, namespace, jobName stri
 		FieldSelector: "metadata.name=" + jobName,
 	})
 	if err != nil {
-		fmt.Printf("failed to watch job %s/%s: %v\n", namespace, jobName, err)
+		slog.Error("failed to watch kubernetes job", "namespace", namespace, "job", jobName, "error", err)
 		return
 	}
 	defer watcher.Stop()
@@ -361,11 +362,11 @@ func watchJobCompletion(clientSet *kubernetes.Clientset, namespace, jobName stri
 		}
 		for _, cond := range job.Status.Conditions {
 			if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-				fmt.Printf("job %s/%s completed successfully\n", namespace, jobName)
+				slog.Info("kubernetes job completed", "namespace", namespace, "job", jobName)
 				return
 			}
 			if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-				fmt.Printf("job %s/%s failed: %s\n", namespace, jobName, cond.Message)
+				slog.Error("kubernetes job failed", "namespace", namespace, "job", jobName, "message", cond.Message)
 				return
 			}
 		}
