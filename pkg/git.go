@@ -2,6 +2,7 @@ package pkg
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -61,6 +62,8 @@ type gitDiffResult struct {
 	ExportedNewFiles []string `json:"exportedNewFiles,omitempty"`
 }
 
+var errGitSyncNoOp = errors.New("git sync no-op")
+
 func newGitSource(cfg GitCfg, sourceName string, sharedVolumePath string, apiServerEndpoint string) Source {
 	return gitSource{
 		cfg:               cfg,
@@ -93,6 +96,14 @@ func (g gitSource) Validate() error {
 func (g gitSource) Fetch() (SourceResult, error) {
 	gitResult, err := gitSync(g.cfg, g.sourceName, g.sharedVolumePath, g.apiServerEndpoint)
 	if err != nil {
+		if errors.Is(err, errGitSyncNoOp) {
+			return SourceResult{
+				Name:    g.sourceName,
+				Type:    "git",
+				GitDiff: &gitResult,
+				NoOp:    true,
+			}, nil
+		}
 		return SourceResult{Name: g.sourceName, Type: "git"}, err
 	}
 
@@ -131,7 +142,7 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 			Name:         sourceName,
 			BaseCommit:   lastCommitSHA,
 			TargetCommit: latestSnapshot.CommitSHA,
-		}, nil
+		}, errGitSyncNoOp
 	}
 
 	lastCommitData, err := gitGetLastCommit(source, lastCommitSHA)
@@ -167,7 +178,7 @@ func gitSync(source GitCfg, sourceName string, sharedVolumePath string, apiServe
 	diffResult.Name = strings.TrimSpace(sourceName)
 
 	if len(diffResult.ChangedFiles) == 0 {
-		return diffResult, nil
+		return diffResult, errGitSyncNoOp
 	}
 
 	lastSnapshot, err := decodeGitCommitSnapshot(lastCommitData)

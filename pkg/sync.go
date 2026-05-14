@@ -22,6 +22,7 @@ type SourceResult struct {
 	SharedVolumePath string
 	GitDiff          *gitDiffResult
 	ConfluenceDiff   *confluenceDiffResult
+	NoOp             bool
 	Err              error
 }
 
@@ -153,6 +154,11 @@ func performSyncCycle(c Config, clientSet *kubernetes.Clientset) error {
 				if firstErr == nil {
 					firstErr = fmt.Errorf("source %s (%s): %w", result.Name, result.Type, result.Err)
 				}
+				continue
+			}
+
+			if result.NoOp {
+				fmt.Printf("source %s (%s) produced no work, skipping kubernetes job creation\n", result.Name, result.Type)
 				continue
 			}
 

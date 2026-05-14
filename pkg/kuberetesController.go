@@ -199,18 +199,6 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		Name:  "SOURCE_RESULT",
 		Value: string(resultJSON),
 	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_SHARED_VOLUME_PATH",
-		Value: result.SharedVolumePath,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_SHARED_VOLUME_NAME",
-		Value: result.SharedVolumeName,
-	})
-	container.Env = upsertEnv(container.Env, corev1.EnvVar{
-		Name:  "SOURCE_TARGET_COMMIT",
-		Value: meta.TargetCommit,
-	})
 
 	if mountPath != "" {
 		container.VolumeMounts = upsertSharedVolumeMount(container.VolumeMounts, volumeName, mountPath)
