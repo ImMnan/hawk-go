@@ -109,11 +109,6 @@ func sync(c Config) error {
 			return fmt.Errorf("failed to load job template: %w", err)
 		}
 
-		templatePVC, err := loadPVCTemplate(syncCfg.PVCTemplate)
-		if err != nil {
-			return fmt.Errorf("failed to load pvc template: %w", err)
-		}
-
 		switch syncCfg.Mode {
 		case "local-agent":
 			fmt.Printf("syncing %s using local agent\n", c.Name)
@@ -180,7 +175,7 @@ func sync(c Config) error {
 					continue
 				}
 
-				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, templatePVC, clientSet)
+				launchMeta, err := createKubernetesJob(result, syncCfg, templateJob, clientSet)
 				if err != nil {
 					fmt.Printf("failed to create kubernetes job for source %s (%s): %v\n", result.Name, result.Type, err)
 					if firstErr == nil {

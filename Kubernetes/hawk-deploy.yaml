@@ -42,7 +42,6 @@ data:
         image: immnan/hawk-llm:0.1.1
         schedule: "* * * * *"
         job-template: /etc/hawk/template/job-git.yaml
-        pvc-template: /etc/hawk/template/pvc-git.yaml
         sources:
           - type: git
             name: basic-git
@@ -107,21 +106,7 @@ data:
           volumes:
             - name: hawk-volume
               persistentVolumeClaim:
-                claimName: hawk-llm-pvc
-  pvc-git.yaml: |
-    apiVersion: v1
-    kind: PersistentVolumeClaim
-    metadata:
-      name: hawk-llm-pvc
-      namespace: hawk
-    spec:
-      storageClassName: standard
-      accessModes:
-      - ReadWriteOnce
-      resources:
-        requests:
-          storage: 2Gi
-
+                claimName: hawk-shared-pvc
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim
@@ -129,9 +114,9 @@ metadata:
   name: hawk-shared-pvc
   namespace: hawk
 spec:
-  storageClassName: standard
+  storageClassName: filestore-rwx
   accessModes:
-  - ReadWriteOnce
+  - ReadWriteMany
   resources:
     requests:
       storage: 2Gi
@@ -169,8 +154,6 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
-          - name: SHARED_VOLUME_NAME
-            value: hawk-volume 
         resources:
           requests:
             memory: "256Mi"

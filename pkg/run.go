@@ -25,7 +25,6 @@ type SyncConfig struct {
 	AgentType   string `yaml:"agentType"`
 	Image       string `yaml:"image"`
 	JobTemplate string `yaml:"job-template"`
-	PVCTemplate string `yaml:"pvc-template"`
 	Schedule    string
 	Sources     []sourceConfig
 	APIServers  apiServerCfg `yaml:"apiServer"`

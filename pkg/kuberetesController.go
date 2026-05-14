@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path"
 	"strings"
 	"time"
 
@@ -46,17 +45,12 @@ func kubernetesController(syncCfg SyncConfig) (chan SourceResult, error) {
 		return nil, err
 	}
 
-	templatePVC, err := loadPVCTemplate(syncCfg.PVCTemplate)
-	if err != nil {
-		return nil, err
-	}
-
 	resultQueue := make(chan SourceResult, 16)
-	go kubernetesControllerListener(resultQueue, syncCfg, templateJob, templatePVC)
+	go kubernetesControllerListener(resultQueue, syncCfg, templateJob)
 	return resultQueue, nil
 }
 
-func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job, templatePVC *corev1.PersistentVolumeClaim) {
+func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job) {
 	/*
 	   - Main function that handles kubernetes resources and workloads.
 	   - Processes each source result and creates kubernetes jobs
@@ -68,7 +62,7 @@ func kubernetesControllerListener(resultQueue <-chan SourceResult, syncCfg SyncC
 	}
 
 	for result := range resultQueue {
-		if _, err := createKubernetesJob(result, syncCfg, templateJob, templatePVC, clientSet); err != nil {
+		if _, err := createKubernetesJob(result, syncCfg, templateJob, clientSet); err != nil {
 			fmt.Printf("failed to create kubernetes job for source %s: %v\n", result.Name, err)
 		}
 	}
@@ -97,37 +91,6 @@ func loadJobTemplate(templatePath string) (*batchv1.Job, error) {
 	return &job, nil
 }
 
-func loadPVCTemplate(templatePath string) (*corev1.PersistentVolumeClaim, error) {
-	path := strings.TrimSpace(templatePath)
-	if path == "" {
-		return nil, fmt.Errorf("sync.pvc-template is required")
-	}
-
-	templateBytes, err := os.ReadFile(path)
-	if err != nil {
-		return nil, fmt.Errorf("read pvc template %s: %w", path, err)
-	}
-
-	var pvc corev1.PersistentVolumeClaim
-	if err := yaml.Unmarshal(templateBytes, &pvc); err != nil {
-		return nil, fmt.Errorf("parse pvc template %s: %w", path, err)
-	}
-
-	if pvc.Spec.StorageClassName == nil || strings.TrimSpace(*pvc.Spec.StorageClassName) == "" {
-		return nil, fmt.Errorf("pvc template %s must include spec.storageClassName", path)
-	}
-
-	if len(pvc.Spec.AccessModes) == 0 {
-		return nil, fmt.Errorf("pvc template %s must include at least one access mode", path)
-	}
-
-	if pvc.Spec.Resources.Requests.Storage().IsZero() {
-		return nil, fmt.Errorf("pvc template %s must include storage request", path)
-	}
-
-	return &pvc, nil
-}
-
 // sourceResultPayload is a JSON-serializable view of SourceResult used as the SOURCE_RESULT env variable.
 type sourceResultPayload struct {
 	Name             string                `json:"name"`
@@ -143,11 +106,10 @@ type jobLaunchMetadata struct {
 	SourceName   string
 	JobName      string
 	Namespace    string
-	PVCName      string
 	TargetCommit string
 }
 
-func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job, templatePVC *corev1.PersistentVolumeClaim, clientSet *kubernetes.Clientset) (jobLaunchMetadata, error) {
+func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *batchv1.Job, clientSet *kubernetes.Clientset) (jobLaunchMetadata, error) {
 	meta := jobLaunchMetadata{
 		SourceName: strings.TrimSpace(result.Name),
 	}
@@ -192,12 +154,6 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	jobName := fmt.Sprintf("%s-%d", baseJobName, time.Now().Unix())
 	meta.JobName = jobName
 	meta.Namespace = namespace
-	jobPVCName := jobName
-	if len(jobPVCName) > 59 {
-		jobPVCName = jobPVCName[:59]
-	}
-	jobPVCName += "-pvc"
-	meta.PVCName = jobPVCName
 
 	job := templateJob.DeepCopy()
 	job.Namespace = namespace
@@ -207,19 +163,16 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 	job.CreationTimestamp = metav1.Time{}
 
 	ctx := context.Background()
-	sourceBinding, err := resolveRuntimeSourceVolumeBinding(ctx, clientSet, namespace, volumeName)
-	if err != nil {
-		return meta, err
+	sharedClaimName := resolveSharedClaimName(job.Spec.Template.Spec.Volumes, volumeName)
+	if sharedClaimName == "" {
+		return meta, fmt.Errorf("job template must include at least one pvc-backed volume for source %s", result.Name)
 	}
-	if err := ensureJobPVCFromTemplate(ctx, clientSet, namespace, templatePVC, jobPVCName, jobName, result.Name); err != nil {
+
+	if err := assertVolumePathMapped(job.Spec.Template.Spec.Containers[0].VolumeMounts, volumeName, mountPath); err != nil {
 		return meta, err
 	}
 
-	if err := copySourceDataToJobPVC(ctx, clientSet, namespace, sourceBinding, jobPVCName, mountPath, jobName, result.Name); err != nil {
-		return meta, err
-	}
-
-	job.Spec.Template.Spec.Volumes = upsertSharedVolumeClaim(job.Spec.Template.Spec.Volumes, volumeName, jobPVCName)
+	job.Spec.Template.Spec.Volumes = upsertSharedVolumeClaim(job.Spec.Template.Spec.Volumes, volumeName, sharedClaimName)
 
 	payload := sourceResultPayload{
 		Name:             result.Name,
@@ -297,7 +250,6 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 func cleanupJobResources(ctx context.Context, clientSet *kubernetes.Clientset, meta jobLaunchMetadata) error {
 	namespace := strings.TrimSpace(meta.Namespace)
 	jobName := strings.TrimSpace(meta.JobName)
-	pvcName := strings.TrimSpace(meta.PVCName)
 
 	deletePolicy := metav1.DeletePropagationForeground
 	if jobName != "" {
@@ -306,219 +258,47 @@ func cleanupJobResources(ctx context.Context, clientSet *kubernetes.Clientset, m
 		}
 	}
 
-	if pvcName != "" {
-		if err := clientSet.CoreV1().PersistentVolumeClaims(namespace).Delete(ctx, pvcName, metav1.DeleteOptions{}); err != nil && !apierrors.IsNotFound(err) {
-			return fmt.Errorf("delete job pvc %s/%s: %w", namespace, pvcName, err)
-		}
-	}
-
-	fmt.Printf("cleaned up kubernetes resources namespace=%s job=%s pvc=%s\n", namespace, jobName, pvcName)
+	fmt.Printf("cleaned up kubernetes resources namespace=%s job=%s\n", namespace, jobName)
 	return nil
 }
 
-type sourceVolumeBinding struct {
-	ClaimName string
-	MountPath string
-	NodeName  string
-}
-
-func resolveRuntimeSourceVolumeBinding(ctx context.Context, clientSet *kubernetes.Clientset, namespace, volumeName string) (sourceVolumeBinding, error) {
-	podName := strings.TrimSpace(os.Getenv("HOSTNAME"))
-	if podName == "" {
-		return sourceVolumeBinding{}, fmt.Errorf("unable to resolve current pod name from HOSTNAME")
-	}
-
-	pod, err := clientSet.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
-	if err != nil {
-		return sourceVolumeBinding{}, fmt.Errorf("get current pod %s/%s: %w", namespace, podName, err)
-	}
-
-	claimName := ""
-	for _, volume := range pod.Spec.Volumes {
-		if volume.Name != volumeName || volume.PersistentVolumeClaim == nil {
+func resolveSharedClaimName(volumes []corev1.Volume, volumeName string) string {
+	preferred := strings.TrimSpace(volumeName)
+	for _, volume := range volumes {
+		if volume.Name != preferred || volume.PersistentVolumeClaim == nil {
 			continue
 		}
-		claimName = strings.TrimSpace(volume.PersistentVolumeClaim.ClaimName)
-		break
-	}
-	if claimName == "" {
-		return sourceVolumeBinding{}, fmt.Errorf("current pod %s/%s does not include pvc-backed volume %q", namespace, podName, volumeName)
-	}
-
-	mountPath := ""
-	for _, container := range pod.Spec.Containers {
-		for _, vm := range container.VolumeMounts {
-			if vm.Name != volumeName {
-				continue
-			}
-			mountPath = strings.TrimSpace(vm.MountPath)
-			break
-		}
-		if mountPath != "" {
-			break
+		if claim := strings.TrimSpace(volume.PersistentVolumeClaim.ClaimName); claim != "" {
+			return claim
 		}
 	}
-	if mountPath == "" {
-		return sourceVolumeBinding{}, fmt.Errorf("current pod %s/%s does not mount volume %q", namespace, podName, volumeName)
+
+	for _, volume := range volumes {
+		if volume.PersistentVolumeClaim == nil {
+			continue
+		}
+		if claim := strings.TrimSpace(volume.PersistentVolumeClaim.ClaimName); claim != "" {
+			return claim
+		}
 	}
 
-	return sourceVolumeBinding{
-		ClaimName: claimName,
-		MountPath: mountPath,
-		NodeName:  strings.TrimSpace(pod.Spec.NodeName),
-	}, nil
+	return ""
 }
 
-func ensureJobPVCFromTemplate(ctx context.Context, clientSet *kubernetes.Clientset, namespace string, templatePVC *corev1.PersistentVolumeClaim, jobPVCName, jobName, sourceName string) error {
-	if templatePVC == nil {
-		return fmt.Errorf("pvc template is required to create job pvc for source %s", sourceName)
-	}
-
-	jobPVC := templatePVC.DeepCopy()
-	if jobPVC.Labels == nil {
-		jobPVC.Labels = map[string]string{}
-	}
-	jobPVC.Name = jobPVCName
-	jobPVC.Namespace = namespace
-	//jobPVC.ResourceVersion = ""
-	//jobPVC.UID = ""
-	jobPVC.CreationTimestamp = metav1.Time{}
-	jobPVC.Finalizers = nil
-	jobPVC.Labels["app.kubernetes.io/managed-by"] = "hawk"
-	jobPVC.Labels["hawk/source"] = strings.TrimSpace(sourceName)
-	jobPVC.Labels["hawk/job"] = strings.TrimSpace(jobName)
-	jobPVC.Spec.VolumeName = ""
-
-	if _, err := clientSet.CoreV1().PersistentVolumeClaims(namespace).Create(ctx, jobPVC, metav1.CreateOptions{}); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create job pvc %s from template: %w", jobPVCName, err)
+func assertVolumePathMapped(mounts []corev1.VolumeMount, volumeName, mountPath string) error {
+	resolvedVolume := strings.TrimSpace(volumeName)
+	resolvedMount := strings.TrimSpace(mountPath)
+	for _, mount := range mounts {
+		if mount.Name == resolvedVolume && strings.TrimSpace(mount.MountPath) == resolvedMount {
+			return nil
 		}
 	}
-
-	return nil
-}
-
-func copySourceDataToJobPVC(ctx context.Context, clientSet *kubernetes.Clientset, namespace string, source sourceVolumeBinding, targetPVCName, requestedPath, jobName, sourceName string) error {
-	sourceClaim := strings.TrimSpace(source.ClaimName)
-	if sourceClaim == "" {
-		return fmt.Errorf("source pvc claim is required to stage files for source %s", sourceName)
-	}
-
-	requested := strings.TrimSpace(requestedPath)
-	runtimeMount := strings.TrimSpace(source.MountPath)
-	if requested == "" {
-		requested = runtimeMount
-	}
-
-	relPath := "."
-	if requested != runtimeMount {
-		prefix := strings.TrimSuffix(runtimeMount, "/") + "/"
-		if !strings.HasPrefix(requested, prefix) {
-			return fmt.Errorf("shared volume path %q must be within runtime mount path %q", requested, runtimeMount)
-		}
-		relPath = strings.TrimPrefix(requested, prefix)
-		relPath = path.Clean(relPath)
-		if relPath == "." {
-			relPath = "."
+	for _, mount := range mounts {
+		if strings.TrimSpace(mount.MountPath) == resolvedMount {
+			return nil
 		}
 	}
-
-	copyJobName := jobName + "-seed"
-	if len(copyJobName) > 63 {
-		copyJobName = copyJobName[:63]
-	}
-
-	copyScript := fmt.Sprintf("set -eu; mkdir -p /target; SRC=/source/%s; [ -d \"$SRC\" ] || exit 0; cp -a \"$SRC\"/. /target/", relPath)
-
-	backoff := int32(0)
-	copyJob := &batchv1.Job{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      copyJobName,
-			Namespace: namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "hawk",
-				"hawk/source":                  strings.TrimSpace(sourceName),
-				"hawk/job":                     strings.TrimSpace(jobName),
-				"hawk/purpose":                 "pvc-seed",
-			},
-		},
-		Spec: batchv1.JobSpec{
-			BackoffLimit: &backoff,
-			Template: corev1.PodTemplateSpec{
-				Spec: corev1.PodSpec{
-					RestartPolicy: corev1.RestartPolicyNever,
-					NodeName:      strings.TrimSpace(source.NodeName),
-					Containers: []corev1.Container{
-						{
-							Name:    "seed",
-							Image:   "busybox:1.36",
-							Command: []string{"sh", "-c", copyScript},
-							VolumeMounts: []corev1.VolumeMount{
-								{Name: "source", MountPath: "/source", ReadOnly: true},
-								{Name: "target", MountPath: "/target"},
-							},
-						},
-					},
-					Volumes: []corev1.Volume{
-						{
-							Name:         "source",
-							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: sourceClaim, ReadOnly: true}},
-						},
-						{
-							Name:         "target",
-							VolumeSource: corev1.VolumeSource{PersistentVolumeClaim: &corev1.PersistentVolumeClaimVolumeSource{ClaimName: targetPVCName}},
-						},
-					},
-				},
-			},
-		},
-	}
-
-	if _, err := clientSet.BatchV1().Jobs(namespace).Create(ctx, copyJob, metav1.CreateOptions{}); err != nil {
-		if !apierrors.IsAlreadyExists(err) {
-			return fmt.Errorf("create pvc seed job %s/%s: %w", namespace, copyJobName, err)
-		}
-	}
-
-	waitCtx, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	if err := waitForJobTerminalState(waitCtx, clientSet, namespace, copyJobName); err != nil {
-		return fmt.Errorf("wait for pvc seed job %s/%s: %w", namespace, copyJobName, err)
-	}
-
-	deletePolicy := metav1.DeletePropagationForeground
-	if err := clientSet.BatchV1().Jobs(namespace).Delete(context.Background(), copyJobName, metav1.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("delete pvc seed job %s/%s: %w", namespace, copyJobName, err)
-	}
-
-	return nil
-}
-
-func waitForJobTerminalState(ctx context.Context, clientSet *kubernetes.Clientset, namespace, jobName string) error {
-	ticker := time.NewTicker(2 * time.Second)
-	defer ticker.Stop()
-
-	for {
-		job, err := clientSet.BatchV1().Jobs(namespace).Get(ctx, jobName, metav1.GetOptions{})
-		if err != nil {
-			return err
-		}
-
-		for _, cond := range job.Status.Conditions {
-			if cond.Type == batchv1.JobComplete && cond.Status == corev1.ConditionTrue {
-				return nil
-			}
-			if cond.Type == batchv1.JobFailed && cond.Status == corev1.ConditionTrue {
-				return fmt.Errorf("seed job failed: %s", strings.TrimSpace(cond.Message))
-			}
-		}
-
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-ticker.C:
-		}
-	}
+	return fmt.Errorf("job template must include mountPath %q for source shared volume", resolvedMount)
 }
 
 func upsertEnv(envs []corev1.EnvVar, env corev1.EnvVar) []corev1.EnvVar {
