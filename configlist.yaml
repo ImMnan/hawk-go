@@ -9,14 +9,12 @@
     #sharedVolume:
     #  path: $HOME/Desktop/     
     schedule: "* * * * *"
-    job-template: /etc/hawk/template/job-git.yaml
-    pvc-template: /etc/hawk/template/pvc-git.yaml
+    template: templates/job-git.yaml
     productName: perfecto
     sources: 
     - type: git
       name: basic-git
       sharedVolume:
-        name: hawk-volume
         path: $HOME/Desktop/ 
       git:
         url: "https://github.com/ImMnan/doc-test.git"
