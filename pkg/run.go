@@ -1,11 +1,15 @@
 package pkg
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
 	stdsync "sync"
+	"syscall"
+	"time"
 
 	"gopkg.in/yaml.v3"
 )
@@ -78,6 +82,17 @@ type apiServerCfg struct {
 func Run() {
 
 	slog.Info("running hawk")
+
+	// Initialize health check server
+	if err := InitHealthCheck(); err != nil {
+		slog.Error("failed to initialize health check", "error", err)
+		panic(err)
+	}
+
+	// Setup graceful shutdown
+	sigChan := make(chan os.Signal, 1)
+	signal.Notify(sigChan, os.Interrupt, syscall.SIGTERM)
+
 	// This is supposed to run 2 functions, one for the init and other for the main loop.
 
 	slog.Info("initializing hawk configurations")
@@ -87,6 +102,9 @@ func Run() {
 		slog.Error("failed to initialize hawk", "error", err)
 		panic(err)
 	}
+
+	// Mark configuration as loaded
+	MarkConfigLoaded()
 
 	// For loop that is going to run the main loop for config list.
 	// Iterate over conflist struct and proceed in the for loop.
@@ -102,7 +120,31 @@ func Run() {
 		}(c)
 	}
 
-	workers.Wait()
+	// Mark workers as started
+	MarkWorkersStarted()
+
+	// Wait for shutdown signal or workers to complete
+	shutdownDone := make(chan struct{})
+	go func() {
+		workers.Wait()
+		close(shutdownDone)
+	}()
+
+	select {
+	case sig := <-sigChan:
+		slog.Info("received shutdown signal", "signal", sig)
+	case <-shutdownDone:
+		slog.Info("all workers completed")
+	}
+
+	// Gracefully shutdown health check server
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	if err := ShutdownHealthCheck(ctx); err != nil {
+		slog.Error("error shutting down health check server", "error", err)
+	}
+
+	slog.Info("hawk shutdown complete")
 }
 
 func init_hawk() (ConfList, error) {

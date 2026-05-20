@@ -39,8 +39,8 @@ data:
       sync:
         enabled: true
         mode: local-agent
-        image: immnan/hawk-llm:0.1.1
-        schedule: "* * * * *"
+        image: immnan/hawk-llm:0.1.5
+        schedule: "0 */12 * * *"
         job-template: /etc/hawk/template/job-git.yaml
         sources:
           - type: git
@@ -100,9 +100,18 @@ data:
                   value: "{}"
                 - name: SOURCE_SHARED_VOLUME_PATH
                   value: "/opt/hawk-data/"
+                - name: API_SERVER
+                  value: "hawk-apiserver-svc:3000"
               volumeMounts:
                 - name: hawk-volume
                   mountPath: /opt/hawk-data/
+              resources:
+                requests:
+                  memory: "8Gi"
+                  cpu: "1"
+                limits:
+                  memory: "16Gi"
+                  cpu: "2"                   
           volumes:
             - name: hawk-volume
               persistentVolumeClaim:
@@ -133,7 +142,7 @@ spec:
         fsGroupChangePolicy: OnRootMismatch
       containers:
       - name: hawk-ctr
-        image: immnan/hawk:0.4.0
+        image: immnan/hawk:0.5.1
         imagePullPolicy: IfNotPresent
         env:
           - name: HAWK_CONFIG_PATH
@@ -142,6 +151,28 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          - name: HEALTH_CHECK_PORT
+            value: "8081"
+        ports:
+          - name: health
+            containerPort: 8081
+            protocol: TCP
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: health
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: health
+          initialDelaySeconds: 15
+          periodSeconds: 5
+          timeoutSeconds: 5
+          failureThreshold: 2
         resources:
           requests:
             memory: "256Mi"

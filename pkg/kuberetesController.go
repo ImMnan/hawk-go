@@ -200,6 +200,10 @@ func createKubernetesJob(result SourceResult, syncCfg SyncConfig, templateJob *b
 		Name:  "SOURCE_RESULT",
 		Value: string(resultJSON),
 	})
+	container.Env = upsertEnv(container.Env, corev1.EnvVar{
+		Name:  "API_SERVER",
+		Value: string(resolveAPIServerEndpoint(syncCfg)),
+	})
 
 	if mountPath != "" {
 		container.VolumeMounts = upsertSharedVolumeMount(container.VolumeMounts, volumeName, mountPath)
