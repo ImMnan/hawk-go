@@ -19,8 +19,8 @@ type gitLastCommitResponse struct {
 }
 
 const (
-	commitWaitPollInterval   = 60 * time.Second
-	commitWaitDefaultTimeout = 30 * time.Minute
+	commitWaitPollInterval   = 180 * time.Second
+	commitWaitDefaultTimeout = 240 * time.Minute
 )
 
 func resolveAPIServerEndpoint(syncCfg SyncConfig) string {
